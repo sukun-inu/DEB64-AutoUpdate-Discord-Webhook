@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-
 #### 事前準備（管理ノードで1回だけ）
 
 ```bash
-apt install -y ansible sshpass
+apt install -y ansible sshpass git
 ansible-galaxy collection install community.general
 git clone https://github.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook.git /tmp/apt-discord
 ```
