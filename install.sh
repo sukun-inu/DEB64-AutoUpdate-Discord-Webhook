@@ -17,9 +17,6 @@ TIMER="/etc/systemd/system/apt-maintenance.timer"
 
 [ "$EUID" -ne 0 ] && die "root 権限が必要です。sudo で実行してください。"
 
-# curl | bash でパイプ実行された場合に read が動くよう stdin を TTY に向け直す
-exec 0</dev/tty
-
 echo -e "${BOLD}"
 echo "  ╔══════════════════════════════════════════╗"
 echo "  ║  APT Auto-Update + Discord Webhook       ║"
@@ -39,8 +36,12 @@ if [ "${#INSTALLED_FILES[@]}" -gt 0 ]; then
     echo "    - $f"
   done
   echo ""
-  read -rp "  上書きして再インストールしますか？ [y/N]: " answer
-  [[ "$answer" =~ ^[yY] ]] || { info "インストールを中止しました。"; exit 0; }
+  # curl | bash でのパイプ実行時も read が動くよう /dev/tty から直接読む
+  read -rp "  上書きして再インストールしますか？ [y/N]: " answer </dev/tty
+  case "$answer" in
+    y|Y|yes|YES) info "上書きインストールを続行します..." ;;
+    *) info "インストールを中止しました。"; exit 0 ;;
+  esac
   echo ""
   if systemctl is-active --quiet apt-maintenance.timer 2>/dev/null; then
     info "既存タイマーを停止します..."
@@ -68,16 +69,16 @@ fi
 
 if [ -n "$WEBHOOK_URL" ]; then
   warn "現在の WEBHOOK_URL: $WEBHOOK_URL"
-  read -rp "  新しい URL（空白で現在の値を維持）: " input
+  read -rp "  新しい URL（空白で現在の値を維持）: " input </dev/tty
   [ -n "$input" ] && WEBHOOK_URL="$input"
 else
   while [ -z "$WEBHOOK_URL" ]; do
-    read -rp "  Discord Webhook URL: " WEBHOOK_URL
+    read -rp "  Discord Webhook URL: " WEBHOOK_URL </dev/tty
     [ -z "$WEBHOOK_URL" ] && error "Webhook URL は必須です。"
   done
 fi
 
-read -rp "  再起動時刻 (HH:MM, デフォルト: ${REBOOT_TIME}): " input
+read -rp "  再起動時刻 (HH:MM, デフォルト: ${REBOOT_TIME}): " input </dev/tty
 REBOOT_TIME="${input:-$REBOOT_TIME}"
 
 success "Webhook 設定完了"

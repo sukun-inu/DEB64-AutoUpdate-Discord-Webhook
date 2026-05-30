@@ -18,9 +18,6 @@ LOG="/var/log/apt-maintenance.log"
 
 [ "$EUID" -ne 0 ] && die "root 権限が必要です。sudo で実行してください。"
 
-# curl | bash でパイプ実行された場合に read が動くよう stdin を TTY に向け直す
-exec 0</dev/tty
-
 echo -e "${BOLD}"
 echo "  ╔══════════════════════════════════════════╗"
 echo "  ║  APT Auto-Update + Discord Webhook       ║"
@@ -46,8 +43,12 @@ for f in "${FOUND_FILES[@]}"; do
 done
 echo ""
 
-read -rp "  本当にアンインストールしますか？ [y/N]: " answer
-[[ "$answer" =~ ^[yY] ]] || { info "アンインストールを中止しました。"; exit 0; }
+# curl | bash でのパイプ実行時も read が動くよう /dev/tty から直接読む
+read -rp "  本当にアンインストールしますか？ [y/N]: " answer </dev/tty
+case "$answer" in
+  y|Y|yes|YES) ;;
+  *) info "アンインストールを中止しました。"; exit 0 ;;
+esac
 echo ""
 
 # --- タイマー/サービスの停止・無効化 ---
@@ -78,13 +79,16 @@ echo ""
 
 # --- ログファイル ---
 if [ -f "$LOG" ]; then
-  read -rp "  ログファイル ($LOG) も削除しますか？ [y/N]: " answer
-  if [[ "$answer" =~ ^[yY] ]]; then
-    rm -f "$LOG"
-    success "ログファイルを削除しました"
-  else
-    info "ログファイルは保持しました: $LOG"
-  fi
+  read -rp "  ログファイル ($LOG) も削除しますか？ [y/N]: " answer </dev/tty
+  case "$answer" in
+    y|Y|yes|YES)
+      rm -f "$LOG"
+      success "ログファイルを削除しました"
+      ;;
+    *)
+      info "ログファイルは保持しました: $LOG"
+      ;;
+  esac
   echo ""
 fi
 
