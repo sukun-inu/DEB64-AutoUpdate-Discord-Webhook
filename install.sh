@@ -280,13 +280,12 @@ Type=oneshot
 ExecStart=/usr/local/sbin/apt-maintenance.sh
 EOF
 
-TZ_SET=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "UTC")
-cat > "$TIMER" <<EOF
+cat > "$TIMER" << 'EOF'
 [Unit]
 Description=Run APT Maintenance Daily
 
 [Timer]
-OnCalendar=${TZ_SET}:*-*-* 02:30:00
+OnCalendar=*-*-* 02:30:00
 Persistent=true
 
 [Install]
@@ -295,6 +294,7 @@ EOF
 
 systemctl daemon-reload
 systemctl enable --now apt-maintenance.timer
+TZ_SET=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "UTC")
 success "タイマーを有効化しました（毎日 02:30 ${TZ_SET} 実行）"
 
 echo ""
