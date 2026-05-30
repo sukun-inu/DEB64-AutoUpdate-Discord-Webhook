@@ -6,6 +6,38 @@ Debian/Ubuntu 系サーバーのパッケージを毎日自動アップデート
 
 ---
 
+## クイックスタート
+
+### インストール
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook/main/install.sh | sudo bash
+```
+
+> 実行前にスクリプトの内容を確認したい場合:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook/main/install.sh | less
+> ```
+
+インストール中に以下を対話形式で入力します:
+- **Webhook URL** — Discord チャンネルの「サーバー設定 → 連携サービス → ウェブフック」から取得
+- **再起動時刻** — カーネル更新後に再起動する時刻（24h 表記、デフォルト: `03:00`）
+
+既にインストール済みの場合は上書き確認プロンプトが表示されます。
+
+---
+
+### アンインストール
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook/main/uninstall.sh | sudo bash
+```
+
+インストール済みファイルを検出して一覧表示し、削除確認を求めます。
+ログファイルの削除有無も個別に確認します。
+
+---
+
 ## 構成ファイル一覧
 
 | ファイル | 役割 |
@@ -17,7 +49,9 @@ Debian/Ubuntu 系サーバーのパッケージを毎日自動アップデート
 
 ---
 
-## セットアップ手順
+## 手動セットアップ
+
+curl が使えない環境や、内容を確認しながらセットアップしたい場合。
 
 ### 1. 必要パッケージのインストール
 
