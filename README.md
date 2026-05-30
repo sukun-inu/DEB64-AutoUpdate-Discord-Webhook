@@ -47,39 +47,31 @@ curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-
 apt install -y ansible sshpass git
 ansible-galaxy collection install community.general
 git clone https://github.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook.git /tmp/apt-discord
+cd /tmp/apt-discord/ansible
 ```
+
+> `ansible.cfg` を読み込むため、以降のコマンドは `/tmp/apt-discord/ansible/` で実行してください。
 
 #### pve / pbs グループ（root パスワード認証）
 
 ```bash
-ansible-playbook \
-  -i /tmp/apt-discord/ansible/inventory.ini \
-  --limit pve,pbs \
-  --ask-pass \
-  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" \
-  /tmp/apt-discord/ansible/playbook.yml
+ansible-playbook -i inventory.ini --limit pve,pbs --ask-pass \
+  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" playbook.yml
 ```
 
 #### dpl グループ（kawasaki ユーザー → sudo）
 
 ```bash
-ansible-playbook \
-  -i /tmp/apt-discord/ansible/inventory.ini \
-  --limit dpl \
-  --ask-pass --ask-become-pass \
-  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" \
-  /tmp/apt-discord/ansible/playbook.yml
+ansible-playbook -i inventory.ini --limit dpl --ask-pass --ask-become-pass \
+  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" playbook.yml
 ```
 
 #### 特定ノードのみ
 
 ```bash
-ansible-playbook \
-  -i /tmp/apt-discord/ansible/inventory.ini \
-  --limit pve-01.prod.dc1.kawasaki-n3t.f5.si \
-  --ask-pass \
-  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" \
-  /tmp/apt-discord/ansible/playbook.yml
+ansible-playbook -i inventory.ini \
+  --limit pve-01.prod.dc1.kawasaki-n3t.f5.si --ask-pass \
+  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" playbook.yml
 ```
 
 ---
