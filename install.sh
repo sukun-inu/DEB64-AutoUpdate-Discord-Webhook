@@ -139,10 +139,12 @@ echo ""
 echo -e "${BOLD}[Step 3/6]${RESET} Discord Webhook の設定"
 
 WEBHOOK_URL=""
+MAINTENANCE_TIME="02:30"
 REBOOT_TIME="03:00"
 
 if [ -f "$CONF" ]; then
   WEBHOOK_URL=$(grep -oP '(?<=WEBHOOK_URL=").*(?=")' "$CONF" 2>/dev/null || true)
+  MAINTENANCE_TIME=$(grep -oP '(?<=MAINTENANCE_TIME=").*(?=")' "$CONF" 2>/dev/null || echo "02:30")
   REBOOT_TIME=$(grep -oP '(?<=REBOOT_TIME=").*(?=")' "$CONF" 2>/dev/null || echo "03:00")
 fi
 
@@ -157,16 +159,25 @@ else
   done
 fi
 
-read -rp "  再起動時刻 (HH:MM, デフォルト: ${REBOOT_TIME}): " input </dev/tty
+echo ""
+info "--- 時刻設定 ---"
+info "メンテナンス実行時刻  : APT アップデートを実行する時刻（タイマー）"
+info "カーネル更新後の再起動: カーネル更新が検知された翌朝に再起動する時刻"
+echo ""
+read -rp "  メンテナンス実行時刻      (HH:MM, デフォルト: ${MAINTENANCE_TIME}): " input </dev/tty
+MAINTENANCE_TIME="${input:-$MAINTENANCE_TIME}"
+
+read -rp "  カーネル更新後の再起動時刻 (HH:MM, デフォルト: ${REBOOT_TIME}): " input </dev/tty
 REBOOT_TIME="${input:-$REBOOT_TIME}"
 
-success "Webhook 設定完了"
+success "設定完了"
 echo ""
 
 # --- Step 4/6: 設定ファイル ---
 echo -e "${BOLD}[Step 4/6]${RESET} 設定ファイルを作成しています..."
 cat > "$CONF" <<EOF
 WEBHOOK_URL="$WEBHOOK_URL"
+MAINTENANCE_TIME="$MAINTENANCE_TIME"
 REBOOT_TIME="$REBOOT_TIME"
 EOF
 chmod 600 "$CONF"
@@ -280,12 +291,12 @@ Type=oneshot
 ExecStart=/usr/local/sbin/apt-maintenance.sh
 EOF
 
-cat > "$TIMER" << 'EOF'
+cat > "$TIMER" <<EOF
 [Unit]
 Description=Run APT Maintenance Daily
 
 [Timer]
-OnCalendar=*-*-* 02:30:00
+OnCalendar=*-*-* ${MAINTENANCE_TIME}:00
 Persistent=true
 
 [Install]
@@ -295,7 +306,7 @@ EOF
 systemctl daemon-reload
 systemctl enable --now apt-maintenance.timer
 TZ_SET=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "UTC")
-success "タイマーを有効化しました（毎日 02:30 ${TZ_SET} 実行）"
+success "タイマーを有効化しました（毎日 ${MAINTENANCE_TIME} ${TZ_SET} 実行）"
 
 echo ""
 info "タイマー確認: systemctl list-timers apt-maintenance.timer"
