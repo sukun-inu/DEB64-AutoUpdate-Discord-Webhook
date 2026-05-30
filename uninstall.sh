@@ -52,17 +52,13 @@ esac
 echo ""
 
 # --- タイマー/サービスの停止・無効化 ---
-if systemctl is-active --quiet apt-maintenance.timer 2>/dev/null; then
-  info "タイマーを停止しています..."
-  systemctl stop apt-maintenance.timer
-  success "タイマーを停止しました"
-fi
-
-if systemctl is-enabled --quiet apt-maintenance.timer 2>/dev/null; then
-  info "タイマーを無効化しています..."
-  systemctl disable apt-maintenance.timer
-  success "タイマーを無効化しました"
-fi
+# bad-setting 等の壊れた状態でも確実に止まるよう is-active/is-enabled チェックを省き
+# 直接 stop/disable し、失敗は無視する。シンボリックリンクも明示的に削除する。
+info "タイマーを停止・無効化しています..."
+systemctl stop apt-maintenance.timer 2>/dev/null || true
+systemctl disable apt-maintenance.timer 2>/dev/null || true
+rm -f /etc/systemd/system/timers.target.wants/apt-maintenance.timer
+success "タイマーを停止・無効化しました"
 
 # --- ファイル削除 ---
 info "ファイルを削除しています..."
