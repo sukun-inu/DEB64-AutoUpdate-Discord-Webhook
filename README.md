@@ -46,7 +46,11 @@ curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-
 ```bash
 apt install -y ansible sshpass git
 ansible-galaxy collection install community.general
-git clone https://github.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook.git /tmp/apt-discord
+
+# 初回
+git clone https://github.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook.git /tmp/apt-discord \
+  || git -C /tmp/apt-discord pull
+
 cd /tmp/apt-discord/ansible
 ```
 
