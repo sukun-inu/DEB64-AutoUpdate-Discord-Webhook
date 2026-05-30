@@ -56,17 +56,10 @@ cd /tmp/apt-discord/ansible
 
 > `ansible.cfg` を読み込むため、以降のコマンドは `/tmp/apt-discord/ansible/` で実行してください。
 
-#### pve / pbs グループ（root パスワード認証）
+#### 全ノード（root パスワード認証）
 
 ```bash
-ansible-playbook -i inventory.ini --limit pve,pbs --ask-pass \
-  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" playbook.yml
-```
-
-#### dpl グループ（kawasaki ユーザー → sudo）
-
-```bash
-ansible-playbook -i inventory.ini --limit dpl --ask-pass --ask-become-pass \
+ansible-playbook -i inventory.ini --ask-pass \
   -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" playbook.yml
 ```
 
