@@ -36,7 +36,6 @@ if [ "${#INSTALLED_FILES[@]}" -gt 0 ]; then
     echo "    - $f"
   done
   echo ""
-  # curl | bash でのパイプ実行時も read が動くよう /dev/tty から直接読む
   read -rp "  上書きして再インストールしますか？ [y/N]: " answer </dev/tty
   case "$answer" in
     y|Y|yes|YES) info "上書きインストールを続行します..." ;;
@@ -49,15 +48,85 @@ if [ "${#INSTALLED_FILES[@]}" -gt 0 ]; then
   fi
 fi
 
-# --- Step 1: 依存パッケージ ---
-echo -e "${BOLD}[Step 1/5]${RESET} 依存パッケージをインストールしています..."
+# --- Step 1/6: 依存パッケージ ---
+echo -e "${BOLD}[Step 1/6]${RESET} 依存パッケージをインストールしています..."
 apt-get install -y unattended-upgrades jq curl >/dev/null 2>&1
 dpkg-reconfigure -plow unattended-upgrades
 success "依存パッケージのインストール完了"
 echo ""
 
-# --- Step 2: Webhook 設定 ---
-echo -e "${BOLD}[Step 2/5]${RESET} Discord Webhook の設定"
+# --- Step 2/6: タイムゾーン・NTP同期 ---
+echo -e "${BOLD}[Step 2/6]${RESET} タイムゾーンと時刻同期を確認しています..."
+
+TZ_CURRENT=$(timedatectl show --property=Timezone --value 2>/dev/null \
+  || cat /etc/timezone 2>/dev/null \
+  || echo "unknown")
+NTP_SYNCED=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || echo "no")
+NTP_ENABLED=$(timedatectl show --property=NTP --value 2>/dev/null || echo "no")
+
+info "現在のタイムゾーン : $TZ_CURRENT"
+info "NTP 有効          : $NTP_ENABLED"
+info "NTP 同期済み      : $NTP_SYNCED"
+echo ""
+
+# タイムゾーンが Asia/Tokyo でない場合は変更を提案
+if [ "$TZ_CURRENT" != "Asia/Tokyo" ]; then
+  warn "タイムゾーンが Asia/Tokyo ではありません（現在: $TZ_CURRENT）"
+  warn "UTC のままだとタイマーが JST より 9 時間ずれて動作します。"
+  read -rp "  タイムゾーンを Asia/Tokyo に変更しますか？ [Y/n]: " tz_answer </dev/tty
+  case "$tz_answer" in
+    n|N|no|NO) warn "タイムゾーンを変更しません。タイマー時刻は $TZ_CURRENT 基準になります。" ;;
+    *)
+      timedatectl set-timezone Asia/Tokyo
+      success "タイムゾーンを Asia/Tokyo に変更しました"
+      ;;
+  esac
+else
+  success "タイムゾーンは Asia/Tokyo に設定されています"
+fi
+
+# NTP 同期が無効または未同期の場合は有効化
+if [ "$NTP_ENABLED" != "yes" ] || [ "$NTP_SYNCED" != "yes" ]; then
+  warn "NTP 時刻同期が有効でないか、まだ同期されていません。"
+
+  if systemctl list-unit-files chronyd.service &>/dev/null \
+      && systemctl is-enabled --quiet chronyd 2>/dev/null; then
+    info "chrony が検出されました。有効化します..."
+    systemctl enable --now chronyd
+    success "chrony の NTP 同期を有効化しました"
+  elif systemctl list-unit-files ntp.service &>/dev/null; then
+    info "ntp が検出されました。有効化します..."
+    systemctl enable --now ntp
+    success "ntp の時刻同期を有効化しました"
+  else
+    info "systemd-timesyncd を有効化します..."
+    timedatectl set-ntp true
+    systemctl enable --now systemd-timesyncd 2>/dev/null || true
+    success "systemd-timesyncd の NTP 同期を有効化しました"
+  fi
+
+  # 同期待ち（最大 10 秒）
+  info "NTP 同期を待っています..."
+  for i in $(seq 1 10); do
+    SYNCED=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || echo "no")
+    [ "$SYNCED" = "yes" ] && break
+    sleep 1
+  done
+
+  SYNCED=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || echo "no")
+  if [ "$SYNCED" = "yes" ]; then
+    success "NTP 同期完了: $(date)"
+  else
+    warn "NTP 同期がまだ完了していません。しばらく後に timedatectl で確認してください。"
+  fi
+else
+  success "NTP 時刻同期は正常に動作しています"
+fi
+
+echo ""
+
+# --- Step 3/6: Webhook 設定 ---
+echo -e "${BOLD}[Step 3/6]${RESET} Discord Webhook の設定"
 
 WEBHOOK_URL=""
 REBOOT_TIME="03:00"
@@ -84,8 +153,8 @@ REBOOT_TIME="${input:-$REBOOT_TIME}"
 success "Webhook 設定完了"
 echo ""
 
-# --- Step 3: 設定ファイル ---
-echo -e "${BOLD}[Step 3/5]${RESET} 設定ファイルを作成しています..."
+# --- Step 4/6: 設定ファイル ---
+echo -e "${BOLD}[Step 4/6]${RESET} 設定ファイルを作成しています..."
 cat > "$CONF" <<EOF
 WEBHOOK_URL="$WEBHOOK_URL"
 REBOOT_TIME="$REBOOT_TIME"
@@ -94,8 +163,8 @@ chmod 600 "$CONF"
 success "$CONF を作成しました"
 echo ""
 
-# --- Step 4: メンテナンススクリプト ---
-echo -e "${BOLD}[Step 4/5]${RESET} メンテナンススクリプトを作成しています..."
+# --- Step 5/6: メンテナンススクリプト ---
+echo -e "${BOLD}[Step 5/6]${RESET} メンテナンススクリプトを作成しています..."
 cat > "$SCRIPT" << 'SCRIPT_EOF'
 #!/bin/bash
 set -euo pipefail
@@ -112,7 +181,7 @@ COLOR=3066993
 KERNEL_UPDATED=0
 REBOOT_SCHEDULED=0
 
-echo "===== $(date '+%F %T') =====" >> "$LOG"
+echo "===== $(date '+%F %T %Z') =====" >> "$LOG"
 
 if ! unattended-upgrade >> "$LOG" 2>&1; then
   RESULT="失敗"
@@ -150,10 +219,14 @@ else
 fi
 PACKAGE_LIST=$(printf '```\n%s\n```' "$PACKAGE_LIST")
 
+TZ_INFO=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "unknown")
+NTP_INFO=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || echo "unknown")
+
 DESCRIPTION="セキュリティ更新数: ${SECURITY_COUNT}
 重大パッケージ検知数: ${CRITICAL_COUNT}
 カーネル更新: ${KERNEL_UPDATED}
 再起動予定: ${REBOOT_SCHEDULED}
+タイムゾーン: ${TZ_INFO} / NTP同期: ${NTP_INFO}
 
 更新一覧:
 ${PACKAGE_LIST}
@@ -181,8 +254,8 @@ chmod +x "$SCRIPT"
 success "$SCRIPT を作成しました"
 echo ""
 
-# --- Step 5: systemd ---
-echo -e "${BOLD}[Step 5/5]${RESET} systemd サービスとタイマーを設定しています..."
+# --- Step 6/6: systemd ---
+echo -e "${BOLD}[Step 6/6]${RESET} systemd サービスとタイマーを設定しています..."
 
 cat > "$SERVICE" << 'EOF'
 [Unit]
@@ -195,12 +268,14 @@ Type=oneshot
 ExecStart=/usr/local/sbin/apt-maintenance.sh
 EOF
 
-cat > "$TIMER" << 'EOF'
+# タイムゾーンを明示指定してタイマーを設定
+TZ_SET=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "UTC")
+cat > "$TIMER" <<EOF
 [Unit]
 Description=Run APT Maintenance Daily
 
 [Timer]
-OnCalendar=*-*-* 02:30:00
+OnCalendar=${TZ_SET}:*-*-* 02:30:00
 Persistent=true
 
 [Install]
@@ -209,7 +284,10 @@ EOF
 
 systemctl daemon-reload
 systemctl enable --now apt-maintenance.timer
-success "タイマーを有効化しました（毎日 02:30 実行）"
+success "タイマーを有効化しました（毎日 02:30 ${TZ_SET} 実行）"
+
+echo ""
+info "タイマー確認: systemctl list-timers apt-maintenance.timer"
 echo ""
 
 echo -e "${GREEN}${BOLD}"
