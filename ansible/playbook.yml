@@ -1,0 +1,7 @@
+---
+- name: APT Maintenance + Discord Webhook セットアップ
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - apt-discord

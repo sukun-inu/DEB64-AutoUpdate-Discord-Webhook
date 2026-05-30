@@ -21,7 +21,8 @@ curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-
 
 インストール中に以下を対話形式で入力します:
 - **Webhook URL** — Discord チャンネルの「サーバー設定 → 連携サービス → ウェブフック」から取得
-- **再起動時刻** — カーネル更新後に再起動する時刻（24h 表記、デフォルト: `03:00`）
+- **メンテナンス実行時刻** — APT アップデートを実行する時刻（デフォルト: `02:30`）
+- **カーネル更新後の再起動時刻** — カーネル更新を検知した翌朝に再起動する時刻（デフォルト: `03:00`）
 
 既にインストール済みの場合は上書き確認プロンプトが表示されます。
 
@@ -35,6 +36,51 @@ curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-
 
 インストール済みファイルを検出して一覧表示し、削除確認を求めます。
 ログファイルの削除有無も個別に確認します。
+
+---
+
+### Ansible でクラスター一括インストール
+
+#### 事前準備（管理ノードで1回だけ）
+
+```bash
+apt install -y ansible sshpass
+ansible-galaxy collection install community.general
+git clone https://github.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook.git /tmp/apt-discord
+```
+
+#### pve / pbs グループ（root パスワード認証）
+
+```bash
+ansible-playbook \
+  -i /tmp/apt-discord/ansible/inventory.ini \
+  --limit pve,pbs \
+  --ask-pass \
+  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" \
+  /tmp/apt-discord/ansible/playbook.yml
+```
+
+#### dpl グループ（kawasaki ユーザー → sudo）
+
+```bash
+ansible-playbook \
+  -i /tmp/apt-discord/ansible/inventory.ini \
+  --limit dpl \
+  --ask-pass --ask-become-pass \
+  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" \
+  /tmp/apt-discord/ansible/playbook.yml
+```
+
+#### 特定ノードのみ
+
+```bash
+ansible-playbook \
+  -i /tmp/apt-discord/ansible/inventory.ini \
+  --limit pve-01.prod.dc1.kawasaki-n3t.f5.si \
+  --ask-pass \
+  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" \
+  /tmp/apt-discord/ansible/playbook.yml
+```
 
 ---
 

@@ -1,0 +1,115 @@
+---
+- name: webhook_url が設定されているか確認
+  fail:
+    msg: "webhook_url が設定されていません。group_vars/all.yml を編集してください。"
+  when: webhook_url == "" or webhook_url == "YOUR_DISCORD_WEBHOOK_URL"
+
+# --- 依存パッケージ ---
+- name: パッケージリストを更新
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: 依存パッケージをインストール
+  apt:
+    name:
+      - unattended-upgrades
+      - jq
+      - curl
+    state: present
+
+- name: unattended-upgrades の自動更新を有効化
+  copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    owner: root
+    group: root
+    mode: "0644"
+
+# --- タイムゾーン ---
+- name: タイムゾーンを設定
+  community.general.timezone:
+    name: "{{ timezone }}"
+
+# --- NTP 同期 ---
+- name: chrony の存在を確認
+  command: which chronyd
+  register: chrony_check
+  changed_when: false
+  failed_when: false
+
+- name: chrony を有効化
+  systemd:
+    name: chronyd
+    enabled: yes
+    state: started
+  when: chrony_check.rc == 0
+
+- name: systemd-timesyncd を有効化（chrony がない場合）
+  block:
+    - name: NTP を有効化
+      command: timedatectl set-ntp true
+      changed_when: true
+
+    - name: systemd-timesyncd を起動
+      systemd:
+        name: systemd-timesyncd
+        enabled: yes
+        state: started
+  when: chrony_check.rc != 0
+
+# --- 設定ファイル ---
+- name: apt-discord.conf を配置
+  template:
+    src: apt-discord.conf.j2
+    dest: /etc/apt-discord.conf
+    owner: root
+    group: root
+    mode: "0600"
+
+# --- メンテナンススクリプト ---
+- name: apt-maintenance.sh を配置
+  copy:
+    src: apt-maintenance.sh
+    dest: /usr/local/sbin/apt-maintenance.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+# --- systemd ユニット ---
+- name: apt-maintenance.service を配置
+  copy:
+    dest: /etc/systemd/system/apt-maintenance.service
+    content: |
+      [Unit]
+      Description=APT Maintenance with Delayed Reboot and Discord
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/apt-maintenance.sh
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload systemd
+
+- name: apt-maintenance.timer を配置
+  template:
+    src: apt-maintenance.timer.j2
+    dest: /etc/systemd/system/apt-maintenance.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload systemd
+
+- name: systemd をリロード
+  meta: flush_handlers
+
+- name: apt-maintenance.timer を有効化・起動
+  systemd:
+    name: apt-maintenance.timer
+    enabled: yes
+    state: started

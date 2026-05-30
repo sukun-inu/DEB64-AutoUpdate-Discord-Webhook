@@ -1,0 +1,9 @@
+[Unit]
+Description=Run APT Maintenance Daily
+
+[Timer]
+OnCalendar=*-*-* {{ maintenance_time }}:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
