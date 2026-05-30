@@ -1,10 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-# ================================================
-# APT Maintenance + Discord Webhook アンインストーラー
-# ================================================
-
 RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
 
@@ -12,17 +8,18 @@ info()    { echo -e "${CYAN}[INFO]${RESET}  $*"; }
 success() { echo -e "${GREEN}[OK]${RESET}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
+die()     { error "$*"; exit 1; }
 
 CONF="/etc/apt-discord.conf"
 SCRIPT="/usr/local/sbin/apt-maintenance.sh"
 SERVICE="/etc/systemd/system/apt-maintenance.service"
 TIMER="/etc/systemd/system/apt-maintenance.timer"
+LOG="/var/log/apt-maintenance.log"
 
-# --- root チェック ---
-if [ "$EUID" -ne 0 ]; then
-  error "root 権限が必要です。sudo bash uninstall.sh で実行してください。"
-  exit 1
-fi
+[ "$EUID" -ne 0 ] && die "root 権限が必要です。sudo で実行してください。"
+
+# curl | bash でパイプ実行された場合に read が動くよう stdin を TTY に向け直す
+exec 0</dev/tty
 
 echo -e "${BOLD}"
 echo "  ╔══════════════════════════════════════════╗"
@@ -33,10 +30,9 @@ echo -e "${RESET}"
 
 # --- インストール確認 ---
 FOUND_FILES=()
-[ -f "$CONF" ]    && FOUND_FILES+=("$CONF")
-[ -f "$SCRIPT" ]  && FOUND_FILES+=("$SCRIPT")
-[ -f "$SERVICE" ] && FOUND_FILES+=("$SERVICE")
-[ -f "$TIMER" ]   && FOUND_FILES+=("$TIMER")
+for f in "$CONF" "$SCRIPT" "$SERVICE" "$TIMER"; do
+  [ -f "$f" ] && FOUND_FILES+=("$f")
+done
 
 if [ "${#FOUND_FILES[@]}" -eq 0 ]; then
   warn "インストール済みファイルが見つかりませんでした。"
@@ -49,28 +45,25 @@ for f in "${FOUND_FILES[@]}"; do
   echo "    - $f"
 done
 echo ""
-read -rp "  本当にアンインストールしますか？ [y/N]: " CONFIRM
-case "$CONFIRM" in
-  y|Y|yes|YES) info "アンインストールを開始します..." ;;
-  *) info "アンインストールを中止しました。"; exit 0 ;;
-esac
+
+read -rp "  本当にアンインストールしますか？ [y/N]: " answer
+[[ "$answer" =~ ^[yY] ]] || { info "アンインストールを中止しました。"; exit 0; }
 echo ""
 
 # --- タイマー/サービスの停止・無効化 ---
-if systemctl list-unit-files apt-maintenance.timer &>/dev/null; then
-  if systemctl is-active --quiet apt-maintenance.timer 2>/dev/null; then
-    info "タイマーを停止しています..."
-    systemctl stop apt-maintenance.timer
-    success "タイマーを停止しました"
-  fi
-  if systemctl is-enabled --quiet apt-maintenance.timer 2>/dev/null; then
-    info "タイマーを無効化しています..."
-    systemctl disable apt-maintenance.timer
-    success "タイマーを無効化しました"
-  fi
+if systemctl is-active --quiet apt-maintenance.timer 2>/dev/null; then
+  info "タイマーを停止しています..."
+  systemctl stop apt-maintenance.timer
+  success "タイマーを停止しました"
 fi
 
-# --- ファイルの削除 ---
+if systemctl is-enabled --quiet apt-maintenance.timer 2>/dev/null; then
+  info "タイマーを無効化しています..."
+  systemctl disable apt-maintenance.timer
+  success "タイマーを無効化しました"
+fi
+
+# --- ファイル削除 ---
 info "ファイルを削除しています..."
 for f in "$TIMER" "$SERVICE" "$SCRIPT" "$CONF"; do
   if [ -f "$f" ]; then
@@ -79,28 +72,22 @@ for f in "$TIMER" "$SERVICE" "$SCRIPT" "$CONF"; do
   fi
 done
 
-# --- systemd のリロード ---
 systemctl daemon-reload
 success "systemd をリロードしました"
 echo ""
 
-# --- ログファイルの確認 ---
-LOG="/var/log/apt-maintenance.log"
+# --- ログファイル ---
 if [ -f "$LOG" ]; then
-  read -rp "  ログファイル ($LOG) も削除しますか？ [y/N]: " DEL_LOG
-  case "$DEL_LOG" in
-    y|Y|yes|YES)
-      rm -f "$LOG"
-      success "ログファイルを削除しました"
-      ;;
-    *)
-      info "ログファイルは保持しました: $LOG"
-      ;;
-  esac
+  read -rp "  ログファイル ($LOG) も削除しますか？ [y/N]: " answer
+  if [[ "$answer" =~ ^[yY] ]]; then
+    rm -f "$LOG"
+    success "ログファイルを削除しました"
+  else
+    info "ログファイルは保持しました: $LOG"
+  fi
+  echo ""
 fi
-echo ""
 
-# --- 完了メッセージ ---
 echo -e "${GREEN}${BOLD}"
 echo "  ╔══════════════════════════════════════════╗"
 echo "  ║          アンインストール完了！          ║"
