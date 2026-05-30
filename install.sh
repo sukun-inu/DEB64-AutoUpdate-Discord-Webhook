@@ -14,6 +14,7 @@ CONF="/etc/apt-discord.conf"
 SCRIPT="/usr/local/sbin/apt-maintenance.sh"
 SERVICE="/etc/systemd/system/apt-maintenance.service"
 TIMER="/etc/systemd/system/apt-maintenance.timer"
+AUTO_UPGRADES="/etc/apt/apt.conf.d/20auto-upgrades"
 
 [ "$EUID" -ne 0 ] && die "root 権限が必要です。sudo で実行してください。"
 
@@ -50,8 +51,19 @@ fi
 
 # --- Step 1/6: 依存パッケージ ---
 echo -e "${BOLD}[Step 1/6]${RESET} 依存パッケージをインストールしています..."
-apt-get install -y unattended-upgrades jq curl >/dev/null 2>&1
-dpkg-reconfigure -plow unattended-upgrades
+
+# Fix 6: apt-get update を先に実行してパッケージリストを最新化
+info "パッケージリストを更新中..."
+apt-get update -qq || die "apt-get update に失敗しました。ネットワーク接続を確認してください。"
+
+# Fix 2: stderr は残し、失敗時に die で明示的に終了
+DEBIAN_FRONTEND=noninteractive apt-get install -y unattended-upgrades jq curl \
+  >/dev/null || die "パッケージのインストールに失敗しました。"
+
+cat > "$AUTO_UPGRADES" << 'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
 success "依存パッケージのインストール完了"
 echo ""
 
@@ -61,15 +73,14 @@ echo -e "${BOLD}[Step 2/6]${RESET} タイムゾーンと時刻同期を確認し
 TZ_CURRENT=$(timedatectl show --property=Timezone --value 2>/dev/null \
   || cat /etc/timezone 2>/dev/null \
   || echo "unknown")
-NTP_SYNCED=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || echo "no")
 NTP_ENABLED=$(timedatectl show --property=NTP --value 2>/dev/null || echo "no")
+NTP_SYNCED=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || echo "no")
 
 info "現在のタイムゾーン : $TZ_CURRENT"
 info "NTP 有効          : $NTP_ENABLED"
 info "NTP 同期済み      : $NTP_SYNCED"
 echo ""
 
-# タイムゾーンが Asia/Tokyo でない場合は変更を提案
 if [ "$TZ_CURRENT" != "Asia/Tokyo" ]; then
   warn "タイムゾーンが Asia/Tokyo ではありません（現在: $TZ_CURRENT）"
   warn "UTC のままだとタイマーが JST より 9 時間ずれて動作します。"
@@ -78,6 +89,7 @@ if [ "$TZ_CURRENT" != "Asia/Tokyo" ]; then
     n|N|no|NO) warn "タイムゾーンを変更しません。タイマー時刻は $TZ_CURRENT 基準になります。" ;;
     *)
       timedatectl set-timezone Asia/Tokyo
+      TZ_CURRENT="Asia/Tokyo"
       success "タイムゾーンを Asia/Tokyo に変更しました"
       ;;
   esac
@@ -85,17 +97,17 @@ else
   success "タイムゾーンは Asia/Tokyo に設定されています"
 fi
 
-# NTP 同期が無効または未同期の場合は有効化
-if [ "$NTP_ENABLED" != "yes" ] || [ "$NTP_SYNCED" != "yes" ]; then
-  warn "NTP 時刻同期が有効でないか、まだ同期されていません。"
+# Fix 5: NTP_ENABLED のみで判定（NTP_SYNCED は起動直後に "no" になるため誤検知する）
+if [ "$NTP_ENABLED" != "yes" ]; then
+  warn "NTP 時刻同期が有効になっていません。有効化します..."
 
-  if systemctl list-unit-files chronyd.service &>/dev/null \
-      && systemctl is-enabled --quiet chronyd 2>/dev/null; then
-    info "chrony が検出されました。有効化します..."
+  # Fix 4: command -v で存在確認（is-enabled では検出漏れがある）
+  if command -v chronyd &>/dev/null; then
+    info "chrony を有効化します..."
     systemctl enable --now chronyd
     success "chrony の NTP 同期を有効化しました"
-  elif systemctl list-unit-files ntp.service &>/dev/null; then
-    info "ntp が検出されました。有効化します..."
+  elif command -v ntpd &>/dev/null; then
+    info "ntp を有効化します..."
     systemctl enable --now ntp
     success "ntp の時刻同期を有効化しました"
   else
@@ -105,22 +117,20 @@ if [ "$NTP_ENABLED" != "yes" ] || [ "$NTP_SYNCED" != "yes" ]; then
     success "systemd-timesyncd の NTP 同期を有効化しました"
   fi
 
-  # 同期待ち（最大 10 秒）
-  info "NTP 同期を待っています..."
-  for i in $(seq 1 10); do
+  info "NTP 同期を待っています（最大 15 秒）..."
+  for i in $(seq 1 15); do
     SYNCED=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || echo "no")
     [ "$SYNCED" = "yes" ] && break
     sleep 1
   done
 
-  SYNCED=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || echo "no")
-  if [ "$SYNCED" = "yes" ]; then
+  if [ "$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || echo no)" = "yes" ]; then
     success "NTP 同期完了: $(date)"
   else
     warn "NTP 同期がまだ完了していません。しばらく後に timedatectl で確認してください。"
   fi
 else
-  success "NTP 時刻同期は正常に動作しています"
+  success "NTP 時刻同期は有効です"
 fi
 
 echo ""
@@ -208,6 +218,8 @@ fi
 
 if [ -f /var/run/reboot-required ] && [ "$KERNEL_UPDATED" -eq 1 ]; then
   NEXT_RUN=$(date -d "tomorrow ${REBOOT_TIME:-03:00}" +"%Y-%m-%d %H:%M:%S")
+  # Fix 1: 既存の delayed-reboot.service が残っている場合は先に停止して競合を防ぐ
+  systemctl stop delayed-reboot.service 2>/dev/null || true
   systemd-run --on-calendar="$NEXT_RUN" --unit=delayed-reboot.service /sbin/reboot
   REBOOT_SCHEDULED=1
 fi
@@ -268,7 +280,6 @@ Type=oneshot
 ExecStart=/usr/local/sbin/apt-maintenance.sh
 EOF
 
-# タイムゾーンを明示指定してタイマーを設定
 TZ_SET=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "UTC")
 cat > "$TIMER" <<EOF
 [Unit]

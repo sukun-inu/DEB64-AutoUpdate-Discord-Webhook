@@ -14,6 +14,7 @@ CONF="/etc/apt-discord.conf"
 SCRIPT="/usr/local/sbin/apt-maintenance.sh"
 SERVICE="/etc/systemd/system/apt-maintenance.service"
 TIMER="/etc/systemd/system/apt-maintenance.timer"
+AUTO_UPGRADES="/etc/apt/apt.conf.d/20auto-upgrades"
 LOG="/var/log/apt-maintenance.log"
 
 [ "$EUID" -ne 0 ] && die "root 権限が必要です。sudo で実行してください。"
@@ -27,7 +28,7 @@ echo -e "${RESET}"
 
 # --- インストール確認 ---
 FOUND_FILES=()
-for f in "$CONF" "$SCRIPT" "$SERVICE" "$TIMER"; do
+for f in "$CONF" "$SCRIPT" "$SERVICE" "$TIMER" "$AUTO_UPGRADES"; do
   [ -f "$f" ] && FOUND_FILES+=("$f")
 done
 
@@ -43,7 +44,6 @@ for f in "${FOUND_FILES[@]}"; do
 done
 echo ""
 
-# curl | bash でのパイプ実行時も read が動くよう /dev/tty から直接読む
 read -rp "  本当にアンインストールしますか？ [y/N]: " answer </dev/tty
 case "$answer" in
   y|Y|yes|YES) ;;
@@ -66,7 +66,8 @@ fi
 
 # --- ファイル削除 ---
 info "ファイルを削除しています..."
-for f in "$TIMER" "$SERVICE" "$SCRIPT" "$CONF"; do
+# Fix 3: install.sh が作成した 20auto-upgrades も削除対象に追加
+for f in "$TIMER" "$SERVICE" "$SCRIPT" "$CONF" "$AUTO_UPGRADES"; do
   if [ -f "$f" ]; then
     rm -f "$f"
     success "削除: $f"
