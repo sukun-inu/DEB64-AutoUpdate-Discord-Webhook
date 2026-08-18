@@ -1,6 +1,6 @@
 # 手動セットアップ
 
-[← README に戻る](../README.md)
+[← README.ja.md に戻る](../README.ja.md)
 
 `install.sh` や Ansible を使わず、内容を確認しながら入れたい場合の手順。
 
