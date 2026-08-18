@@ -1,23 +1,25 @@
 # DEB64-AutoUpdate-Discord-Webhook
 
-Unattended APT maintenance for Debian and Ubuntu, reporting to Discord.
+Keeps a Linux server updated on its own, and tells you about it on Discord.
 
-Packages are updated daily by `unattended-upgrades`; the result is posted to a Discord
-webhook as a colour-coded embed. If the update touched the kernel, a reboot is scheduled
-for a time you choose rather than taken immediately.
+Left alone, a server quietly accumulates security updates. Logging in every day to check
+is not something anyone keeps up. With this installed, **updates are applied daily and
+the result shows up in Discord** — green when it went fine, red when it did not. You can
+tell the state of the machine from the notification alone.
+
+Some updates need a reboot. This does not reboot on the spot: it **books one for a time
+you choose**, so nothing goes down while you are using it.
 
 日本語版: [README.ja.md](README.ja.md)
 
 ## What it does
 
-- Daily automatic package updates via `unattended-upgrades`, driven by a systemd timer
-- Discord notification per run: **green** for a clean run, **yellow** when a kernel
-  update was applied, **red** on failure
-- Kernel updates are detected and a reboot is booked for the configured `REBOOT_TIME`
-  instead of interrupting whatever the box is doing
-- Security-update and critical-package counts are summarised in the embed
-- Ansible playbook for rolling the whole thing out across a cluster at once
-- `install.sh` and `uninstall.sh` for single hosts
+- Applies package updates daily via `unattended-upgrades`, on a systemd timer
+- Reports each run to Discord: green for clean, yellow when a reboot is needed,
+  red on failure
+- Includes updated package names and the security-update count in the notification
+- Schedules a reboot at your chosen time, and only when the update actually needs one
+- Rolls out to many machines at once with Ansible
 
 ## Quick start
 
@@ -25,31 +27,20 @@ for a time you choose rather than taken immediately.
 curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook/main/install.sh | bash
 ```
 
-You will need a Discord webhook URL (Server Settings → Integrations → Webhooks) and a
-reboot time in 24-hour form. Both live in `/etc/apt-discord.conf`, which is created with
-mode 600.
+You need a Discord webhook URL (Server Settings → Integrations → Webhooks) and a reboot
+time in 24-hour form. Both are stored in `/etc/apt-discord.conf`, created with mode 600.
 
-For a cluster, use the Ansible playbook under `ansible/`. To remove everything, run
-`uninstall.sh`.
+To remove everything, run `uninstall.sh`.
 
-If you would rather install by hand, or `curl` is not available, the full manual
-procedure is in [docs/MANUAL-SETUP.ja.md](docs/MANUAL-SETUP.ja.md).
-
-## Layout
-
-```
-install.sh / uninstall.sh                          single-host install
-ansible/                                           cluster rollout
-ansible/roles/apt-discord/files/apt-maintenance.sh the maintenance script itself
-```
-
-`apt-maintenance.sh` is the single source of truth for the script — it is deliberately
-not duplicated into the documentation, because a copy in a README goes stale.
+`apt-maintenance.sh` under `ansible/roles/apt-discord/files/` is the single source of
+truth for the script itself — it is deliberately not copied into the documentation,
+because a copy goes stale.
 
 ## Documentation
 
 | | |
 |---|---|
 | [docs/MANUAL-SETUP.ja.md](docs/MANUAL-SETUP.ja.md) | Installing by hand, step by step |
+| [docs/OPERATIONS.ja.md](docs/OPERATIONS.ja.md) | Cluster rollout with Ansible, verification, customisation |
 
 Detailed documentation is Japanese-only for now.
