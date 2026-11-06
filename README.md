@@ -20,6 +20,8 @@ you choose**, so nothing goes down while you are using it.
 - Lists each updated package as "old version → new version"
 - Schedules a reboot at your chosen time, and only when the update actually needs one
   (the notification says when, and which packages need it)
+- Right before rebooting, checks for running backups and offline Proxmox cluster nodes,
+  and waits or skips the reboot if it is not safe
 - **Posts "reboot complete" after every boot**, so you can tell the reboot happened —
   and spot unplanned ones (power loss, manual reboots)
 - Reports an error even when the script dies part-way

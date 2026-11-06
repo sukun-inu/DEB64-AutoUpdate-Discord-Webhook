@@ -21,12 +21,42 @@ cd /tmp/apt-discord/ansible
 
 > `ansible.cfg` を読み込むため、以降のコマンドは `/tmp/apt-discord/ansible/` で実行してください。
 
-#### 全ノード（root パスワード認証）
+#### 構成と時刻
+
+`inventory.ini` のグループごとに接続方法と時刻が違います。
+
+| グループ | 対象 | 接続 | 更新 | 再起動 |
+|---|---|---|---|---|
+| `pve` | pve-01, pve-02 | root | 06:30 | 07:00 / 07:30（1 台ずつ） |
+| `pbs` | pbs-01 | root | 06:30 | 08:00 |
+| `vm` | dpl-01, dpl-02, dns-01 | kawasaki → sudo | 02:30 | 03:00 / 03:30 / 04:00（1 台ずつ） |
+
+- 更新時刻はグループ単位で `group_vars/hosts.yml`（PVE・PBS）と `group_vars/vm.yml` に、再起動時刻は台ごとに `inventory.ini` に書いています。
+- ホストの更新はバックアップ（0〜6 時）が終わってから行います。VM の更新・再起動はホストより先に済ませます。
+- 再起動の直前に次を確認し、危なければ待つか見送ります（Discord に「再起動を見送りました」と届きます）。
+  - バックアップ（vzdump）や PBS のタスクが実行中なら、最大 2 時間待つ
+  - PVE クラスタが quorate でない、または停止中のノードがあるなら、再起動しない
+- 再起動の直前に「これから再起動します」、起動後に「再起動完了」が届きます。前者だけで後者が来なければ、上がってこなかったということです。
+
+> **2 ノードの PVE クラスタについて**: 片方を再起動している間、残った 1 台は quorum を失います
+> （`/etc/pve` が読み取り専用になり、HA を使っていれば自己フェンスで再起動します）。
+> PBS などに QDevice を立てて 3 票にしておくのがおすすめです。
+
+#### PVE・PBS（root でパスワード認証）
 
 ```bash
-ansible-playbook -i inventory.ini --ask-pass \
+ansible-playbook -i inventory.ini --limit hosts --ask-pass \
   -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" playbook.yml
 ```
+
+#### VM（kawasaki で接続して sudo）
+
+```bash
+ansible-playbook -i inventory.ini --limit vm --ask-pass --ask-become-pass \
+  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" playbook.yml
+```
+
+> SSH 鍵で入れるなら `--ask-pass` は不要です。sudo にパスワードが要らない設定なら `--ask-become-pass` も不要です。
 
 #### 特定ノードのみ
 
@@ -81,9 +111,10 @@ last -x reboot | head
 tail -f /var/log/apt-maintenance.log
 ```
 
-### 予約した再起動を取り消したい
+### 予約した再起動を確認・取り消したい
 
 ```bash
+systemctl list-timers apt-delayed-reboot.timer   # 予約の有無と時刻
 systemctl stop apt-delayed-reboot.timer
 rm -f /var/lib/apt-maintenance/reboot-scheduled
 ```
