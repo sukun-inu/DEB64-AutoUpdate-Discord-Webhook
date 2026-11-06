@@ -56,6 +56,8 @@ ansible-playbook -i inventory.ini --limit vm --ask-pass --ask-become-pass \
   -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" playbook.yml
 ```
 
+> `-e "webhook_url=..."` を省くと、各サーバーの既存の `/etc/apt-discord.conf` から Webhook URL を引き継ぎます（新規のサーバーでは指定が必要）。
+>
 > SSH 鍵で入れるなら `--ask-pass` は不要です。sudo にパスワードが要らない設定なら `--ask-become-pass` も不要です。
 
 #### 特定ノードのみ

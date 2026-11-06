@@ -1,7 +1,25 @@
 ---
-- name: webhook_url が設定されているか確認
+# webhook_url を指定しなければ、各サーバーの既存設定から引き継ぐ
+- name: 既存の apt-discord.conf を読む
+  slurp:
+    src: /etc/apt-discord.conf
+  register: existing_conf
+  failed_when: false
+  when: webhook_url == "" or webhook_url == "YOUR_DISCORD_WEBHOOK_URL"
+
+- name: 既存の Webhook URL を引き継ぐ
+  set_fact:
+    webhook_url: "{{ (existing_conf.content | b64decode) | regex_search('WEBHOOK_URL=\"([^\"]*)\"', '\\1') | first }}"
+  when:
+    - existing_conf is defined
+    - existing_conf.content is defined
+    - (existing_conf.content | b64decode) is search('WEBHOOK_URL="[^"]+"')
+
+- name: webhook_url が決まっているか確認
   fail:
-    msg: "webhook_url が設定されていません。group_vars/all.yml を編集してください。"
+    msg: >-
+      webhook_url がありません。このサーバーには既存の /etc/apt-discord.conf もありません。
+      -e "webhook_url=..." で指定してください。
   when: webhook_url == "" or webhook_url == "YOUR_DISCORD_WEBHOOK_URL"
 
 # --- 依存パッケージ ---
