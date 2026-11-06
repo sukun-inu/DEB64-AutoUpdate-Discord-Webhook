@@ -2,11 +2,22 @@
 
 [← README.ja.md に戻る](../README.ja.md)
 
-`install.sh` を使わず、内容を確認しながら入れたい場合の手順。
+`install.sh` を使わず、内容を確認しながら入れたい場合の手順です。すべて root で実行します。
+`install.sh` がやっていることと同じなので、通常は `install.sh` を使うほうが簡単です。
 
 ---
 
-curl が使えない環境や、内容を確認しながらセットアップしたい場合。
+### 0. タイムゾーンと時刻同期
+
+タイマーの時刻はサーバーのタイムゾーン基準です。UTC のままだと JST より 9 時間ずれます。
+
+```bash
+timedatectl set-timezone Asia/Tokyo
+timedatectl set-ntp true
+timedatectl            # 「Time zone: Asia/Tokyo」「NTP service: active」を確認
+```
+
+---
 
 ### 1. 必要パッケージのインストール
 
@@ -30,6 +41,7 @@ EOF
 ```bash
 cat > /etc/apt-discord.conf << 'EOF'
 WEBHOOK_URL="YOUR_DISCORD_WEBHOOK_URL"
+MAINTENANCE_TIME="02:30"
 REBOOT_TIME="03:00"
 EOF
 
@@ -37,6 +49,7 @@ chmod 600 /etc/apt-discord.conf
 ```
 
 > **WEBHOOK_URL** : Discord チャンネルの「サーバー設定 → 連携サービス → ウェブフック」から取得してください。  
+> **MAINTENANCE_TIME** : 毎日の更新時刻。手順 5 のタイマーと同じ時刻にしてください（通知の「次回」表示に使います）。  
 > **REBOOT_TIME** : 再起動が必要な更新があったとき、次にこの時刻が来たら再起動する（24h 表記）。
 
 ---
@@ -96,7 +109,7 @@ WantedBy=timers.target
 EOF
 ```
 
-> タイマーは毎日 **02:30** に起動します。変更する場合は `OnCalendar` を編集してください。
+> タイマーは毎日 **02:30** に起動します。変更する場合は `OnCalendar` と、設定ファイルの `MAINTENANCE_TIME` の両方を編集してください。
 
 ---
 
@@ -170,8 +183,13 @@ systemctl enable --now apt-maintenance.timer
 systemctl enable apt-boot-notify.timer
 systemctl enable --now apt-health.timer
 
-# 疎通確認（Discord に「サーバーが起動しました」と届けば OK）
+# 疎通確認（Discord に「🔵 <サーバー名> ｜ 起動しました（予約外）」と届けば OK）
 /usr/local/sbin/apt-maintenance.sh boot-notify
+
+# タイマーが 3 つ並んでいることを確認
+systemctl list-timers 'apt-*'
 ```
+
+届かない場合は [OPERATIONS の「通知が届かないとき」](OPERATIONS.ja.md#通知が届かないとき) を見てください。
 
 ---

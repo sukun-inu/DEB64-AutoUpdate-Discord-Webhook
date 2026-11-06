@@ -884,7 +884,7 @@ TZ_SET=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "UTC")
 success "タイマーを有効化しました（毎日 ${MAINTENANCE_TIME} ${TZ_SET} 実行）"
 
 echo ""
-info "タイマー確認: systemctl list-timers apt-maintenance.timer"
+info "タイマー確認: systemctl list-timers 'apt-*'"
 echo ""
 
 echo -e "${GREEN}${BOLD}"
@@ -901,7 +901,7 @@ case "$test_answer" in
   n|N|no|NO) ;;
   *)
     if "$SCRIPT" boot-notify; then
-      success "テスト通知を送信しました（「サーバーが起動しました」と表示されれば OK）"
+      success "テスト通知を送信しました（Discord に「🔵 $(hostname -s) ｜ 起動しました（予約外）」と届けば OK）"
     else
       warn "テスト通知に失敗しました。Webhook URL と /var/log/apt-maintenance.log を確認してください。"
     fi
@@ -910,6 +910,7 @@ esac
 echo ""
 echo "  動作確認:"
 echo "    systemctl start apt-maintenance.service   # 今すぐ 1 回実行"
-echo "    systemctl list-timers apt-maintenance.timer"
+echo "    $SCRIPT health                  # 安定性チェックを今すぐ送る"
+echo "    systemctl list-timers 'apt-*'"
 echo "    tail -f /var/log/apt-maintenance.log"
 echo ""
