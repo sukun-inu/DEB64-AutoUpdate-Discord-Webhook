@@ -1,3 +1,0 @@
-# VM: ホストより先に更新・再起動を済ませる
-# 再起動時刻は inventory.ini で台ごとにずらしている
-maintenance_time: "02:30"

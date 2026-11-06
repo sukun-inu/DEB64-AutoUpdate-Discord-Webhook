@@ -23,7 +23,6 @@ English: [README.md](README.md)
 - スクリプトが途中で止まっても、エラーとして通知する
 - 通知にサーバーの状態も載せる：ディスク・メモリ・負荷・稼働時間・失敗中のサービス・
   自動更新の対象外で残っている更新（PVE のパッケージなど）・次回実行時刻
-- 複数台へ Ansible で一括導入
 
 ## クイックスタート
 
@@ -64,4 +63,4 @@ curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-
 | | |
 |---|---|
 | [docs/MANUAL-SETUP.ja.md](docs/MANUAL-SETUP.ja.md) | 手作業で入れる場合の手順 |
-| [docs/OPERATIONS.ja.md](docs/OPERATIONS.ja.md) | Ansible でのクラスタ一括導入、動作確認、カスタマイズ |
+| [docs/OPERATIONS.ja.md](docs/OPERATIONS.ja.md) | 複数台への導入と時刻の割り当て、動作確認、カスタマイズ |

@@ -1,74 +1,46 @@
-# 運用（クラスタ展開・動作確認・カスタマイズ）
+# 運用（複数台への導入・動作確認・カスタマイズ）
 
 [← README.ja.md に戻る](../README.ja.md)
 
 ---
 
-### Ansible でクラスター一括インストール
+## 複数台への導入
 
-#### 事前準備（管理ノードで1回だけ）
+台数が少ないので、各サーバーで `install.sh` を実行します（root なら `| bash`、一般ユーザーなら `| sudo bash`）。
 
 ```bash
-apt install -y ansible sshpass git
-ansible-galaxy collection install community.general
-
-# 初回
-git clone https://github.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook.git /tmp/apt-discord \
-  || git -C /tmp/apt-discord pull
-
-cd /tmp/apt-discord/ansible
+curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook/main/install.sh | sudo bash
 ```
 
-> `ansible.cfg` を読み込むため、以降のコマンドは `/tmp/apt-discord/ansible/` で実行してください。
+再インストールのときは既存の `/etc/apt-discord.conf` を読み込むので、Webhook URL は空のまま Enter で引き継げます。
+時刻だけ下の表に合わせて入力してください。
 
-#### 構成と時刻
+### 時刻の割り当て
 
-`inventory.ini` のグループごとに接続方法と時刻が違います。
+再起動が重ならないよう、台ごとに時刻をずらしています（バックアップは 0〜6 時に動く前提）。
 
-| グループ | 対象 | 接続 | 更新 | 再起動 |
-|---|---|---|---|---|
-| `pve` | pve-01, pve-02 | root | 06:30 | 07:00 / 07:30（1 台ずつ） |
-| `pbs` | pbs-01 | root | 06:30 | 08:00 |
-| `vm` | dpl-01, dpl-02, dns-01 | kawasaki → sudo | 02:30 | 03:00 / 03:30 / 04:00（1 台ずつ） |
+| サーバー | 種別 | 更新 | 再起動 |
+|---|---|---|---|
+| dpl-01 | VM | 02:30 | 03:00 |
+| dpl-02 | VM | 02:30 | 03:30 |
+| dns-01 | VM | 02:30 | 04:00 |
+| pve-01 | PVE | 06:30 | 07:00 |
+| pve-02 | PVE | 06:30 | 07:30 |
+| pbs-01 | PBS | 06:30 | 08:00 |
 
-- 更新時刻はグループ単位で `group_vars/hosts.yml`（PVE・PBS）と `group_vars/vm.yml` に、再起動時刻は台ごとに `inventory.ini` に書いています。
-- ホストの更新はバックアップ（0〜6 時）が終わってから行います。VM の更新・再起動はホストより先に済ませます。
+- VM の更新・再起動を先に済ませ、ホストはバックアップが終わってから更新します。
 - 再起動の直前に次を確認し、危なければ待つか見送ります（Discord に「再起動を見送りました」と届きます）。
   - バックアップ（vzdump）や PBS のタスクが実行中なら、最大 2 時間待つ
   - PVE クラスタが quorate でない、または停止中のノードがあるなら、再起動しない
 - 再起動の直前に「これから再起動します」、起動後に「再起動完了」が届きます。前者だけで後者が来なければ、上がってこなかったということです。
+- サーバーを増減したら、この表も更新してください。
 
 > **2 ノードの PVE クラスタについて**: 片方を再起動している間、残った 1 台は quorum を失います
 > （`/etc/pve` が読み取り専用になり、HA を使っていれば自己フェンスで再起動します）。
 > PBS などに QDevice を立てて 3 票にしておくのがおすすめです。
-
-#### PVE・PBS（root でパスワード認証）
-
-```bash
-ansible-playbook -i inventory.ini --limit hosts --ask-pass \
-  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" playbook.yml
-```
-
-#### VM（kawasaki で接続して sudo）
-
-```bash
-ansible-playbook -i inventory.ini --limit vm --ask-pass --ask-become-pass \
-  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" playbook.yml
-```
-
-> `-e "webhook_url=..."` を省くと、各サーバーの既存の `/etc/apt-discord.conf` から Webhook URL を引き継ぎます（新規のサーバーでは指定が必要）。
 >
-> SSH 鍵で入れるなら `--ask-pass` は不要です。sudo にパスワードが要らない設定なら `--ask-become-pass` も不要です。
-
-#### 特定ノードのみ
-
-```bash
-ansible-playbook -i inventory.ini \
-  --limit pve-01.prod.dc1.kawasaki-n3t.f5.si --ask-pass \
-  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" playbook.yml
-```
-
----
+> クラスタから外したノードが `pvecm nodes` に残っていると「停止中のノードがある」と判定され、
+> 自動再起動が毎回見送られます。外したノードは `pvecm delnode <名前>` で削除してください。
 
 ---
 

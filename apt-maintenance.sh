@@ -5,7 +5,7 @@
 #   apt-maintenance.sh boot-notify   起動完了を通知（apt-boot-notify.timer から起動）
 #   apt-maintenance.sh do-reboot     安全を確認してから再起動（予約した再起動タイマーから起動）
 #
-# このファイルが唯一の正。install.sh 内の写しはこのファイルと同一に保つこと。
+# このファイル（リポジトリ直下の apt-maintenance.sh）が唯一の正。install.sh 内の写しはこのファイルと同一に保つこと。
 set -Eeuo pipefail
 
 CONF="/etc/apt-discord.conf"
