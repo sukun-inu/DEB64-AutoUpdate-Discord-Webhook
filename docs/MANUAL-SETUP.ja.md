@@ -2,7 +2,7 @@
 
 [← README.ja.md に戻る](../README.ja.md)
 
-`install.sh` や Ansible を使わず、内容を確認しながら入れたい場合の手順。
+`install.sh` を使わず、内容を確認しながら入れたい場合の手順。
 
 ---
 
@@ -43,20 +43,20 @@ chmod 600 /etc/apt-discord.conf
 
 ### 3. メンテナンススクリプトの作成
 
-スクリプト本体は **リポジトリの [`ansible/roles/apt-discord/files/apt-maintenance.sh`](../ansible/roles/apt-discord/files/apt-maintenance.sh)** が唯一の正です。
+スクリプト本体は **リポジトリの [`apt-maintenance.sh`](../apt-maintenance.sh)** が唯一の正です。
 手順書に写しを置くと必ず古くなるので、ここでは実ファイルをそのまま配置します。
 
 リポジトリを clone 済みの場合:
 
 ```bash
-install -m 755 ansible/roles/apt-discord/files/apt-maintenance.sh \
+install -m 755 apt-maintenance.sh \
   /usr/local/sbin/apt-maintenance.sh
 ```
 
 curl で直接取る場合:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook/main/ansible/roles/apt-discord/files/apt-maintenance.sh \
+curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook/main/apt-maintenance.sh \
   -o /usr/local/sbin/apt-maintenance.sh
 chmod +x /usr/local/sbin/apt-maintenance.sh
 ```

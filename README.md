@@ -20,12 +20,13 @@ you choose**, so nothing goes down while you are using it.
 - Lists each updated package as "old version → new version"
 - Schedules a reboot at your chosen time, and only when the update actually needs one
   (the notification says when, and which packages need it)
+- Right before rebooting, checks for running backups and offline Proxmox cluster nodes,
+  and waits or skips the reboot if it is not safe
 - **Posts "reboot complete" after every boot**, so you can tell the reboot happened —
   and spot unplanned ones (power loss, manual reboots)
 - Reports an error even when the script dies part-way
 - Includes the machine's health in every notification: disk, memory, load, uptime,
   failed services, updates left for a manual upgrade (e.g. Proxmox packages), next run
-- Rolls out to many machines at once with Ansible
 
 ## Quick start
 
@@ -38,7 +39,7 @@ time in 24-hour form. Both are stored in `/etc/apt-discord.conf`, created with m
 
 To remove everything, run `uninstall.sh`.
 
-`apt-maintenance.sh` under `ansible/roles/apt-discord/files/` is the single source of
+`apt-maintenance.sh` at the repository root is the single source of
 truth for the script itself — it is deliberately not copied into the documentation,
 because a copy goes stale.
 
@@ -47,6 +48,6 @@ because a copy goes stale.
 | | |
 |---|---|
 | [docs/MANUAL-SETUP.ja.md](docs/MANUAL-SETUP.ja.md) | Installing by hand, step by step |
-| [docs/OPERATIONS.ja.md](docs/OPERATIONS.ja.md) | Cluster rollout with Ansible, verification, customisation |
+| [docs/OPERATIONS.ja.md](docs/OPERATIONS.ja.md) | Rolling out to several machines, schedules, verification, customisation |
 
 Detailed documentation is Japanese-only for now.

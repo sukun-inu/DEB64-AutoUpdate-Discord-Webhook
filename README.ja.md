@@ -18,11 +18,11 @@ English: [README.md](README.md)
 - 実行結果を Discord へ通知。緑＝正常、黄＝再起動を予約した、赤＝失敗
 - 更新されたパッケージを「旧バージョン → 新バージョン」で通知に含める
 - 再起動が要る更新のときだけ、指定時刻に再起動を予約（予約時刻と理由も通知）
+- 再起動の直前に、バックアップ実行中・PVE クラスタの停止ノードを確認し、危なければ待つ／見送る
 - **再起動したら「再起動完了」を通知**。予約外の起動（停電・手動再起動）も分かる
 - スクリプトが途中で止まっても、エラーとして通知する
 - 通知にサーバーの状態も載せる：ディスク・メモリ・負荷・稼働時間・失敗中のサービス・
   自動更新の対象外で残っている更新（PVE のパッケージなど）・次回実行時刻
-- 複数台へ Ansible で一括導入
 
 ## クイックスタート
 
@@ -63,4 +63,4 @@ curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-
 | | |
 |---|---|
 | [docs/MANUAL-SETUP.ja.md](docs/MANUAL-SETUP.ja.md) | 手作業で入れる場合の手順 |
-| [docs/OPERATIONS.ja.md](docs/OPERATIONS.ja.md) | Ansible でのクラスタ一括導入、動作確認、カスタマイズ |
+| [docs/OPERATIONS.ja.md](docs/OPERATIONS.ja.md) | 複数台への導入と時刻の割り当て、動作確認、カスタマイズ |

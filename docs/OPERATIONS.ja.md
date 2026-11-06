@@ -1,42 +1,46 @@
-# 運用（クラスタ展開・動作確認・カスタマイズ）
+# 運用（複数台への導入・動作確認・カスタマイズ）
 
 [← README.ja.md に戻る](../README.ja.md)
 
 ---
 
-### Ansible でクラスター一括インストール
+## 複数台への導入
 
-#### 事前準備（管理ノードで1回だけ）
-
-```bash
-apt install -y ansible sshpass git
-ansible-galaxy collection install community.general
-
-# 初回
-git clone https://github.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook.git /tmp/apt-discord \
-  || git -C /tmp/apt-discord pull
-
-cd /tmp/apt-discord/ansible
-```
-
-> `ansible.cfg` を読み込むため、以降のコマンドは `/tmp/apt-discord/ansible/` で実行してください。
-
-#### 全ノード（root パスワード認証）
+台数が少ないので、各サーバーで `install.sh` を実行します（root なら `| bash`、一般ユーザーなら `| sudo bash`）。
 
 ```bash
-ansible-playbook -i inventory.ini --ask-pass \
-  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" playbook.yml
+curl -fsSL https://raw.githubusercontent.com/sukun-inu/DEB64-AutoUpdate-Discord-Webhook/main/install.sh | sudo bash
 ```
 
-#### 特定ノードのみ
+再インストールのときは既存の `/etc/apt-discord.conf` を読み込むので、Webhook URL は空のまま Enter で引き継げます。
+時刻だけ下の表に合わせて入力してください。
 
-```bash
-ansible-playbook -i inventory.ini \
-  --limit pve-01.prod.dc1.kawasaki-n3t.f5.si --ask-pass \
-  -e "webhook_url=YOUR_DISCORD_WEBHOOK_URL" playbook.yml
-```
+### 時刻の割り当て
 
----
+再起動が重ならないよう、台ごとに時刻をずらしています（バックアップは 0〜6 時に動く前提）。
+
+| サーバー | 種別 | 更新 | 再起動 |
+|---|---|---|---|
+| dpl-01 | VM | 02:30 | 03:00 |
+| dpl-02 | VM | 02:30 | 03:30 |
+| dns-01 | VM | 02:30 | 04:00 |
+| pve-01 | PVE | 06:30 | 07:00 |
+| pve-02 | PVE | 06:30 | 07:30 |
+| pbs-01 | PBS | 06:30 | 08:00 |
+
+- VM の更新・再起動を先に済ませ、ホストはバックアップが終わってから更新します。
+- 再起動の直前に次を確認し、危なければ待つか見送ります（Discord に「再起動を見送りました」と届きます）。
+  - バックアップ（vzdump）や PBS のタスクが実行中なら、最大 2 時間待つ
+  - PVE クラスタが quorate でない、または停止中のノードがあるなら、再起動しない
+- 再起動の直前に「これから再起動します」、起動後に「再起動完了」が届きます。前者だけで後者が来なければ、上がってこなかったということです。
+- サーバーを増減したら、この表も更新してください。
+
+> **2 ノードの PVE クラスタについて**: 片方を再起動している間、残った 1 台は quorum を失います
+> （`/etc/pve` が読み取り専用になり、HA を使っていれば自己フェンスで再起動します）。
+> PBS などに QDevice を立てて 3 票にしておくのがおすすめです。
+>
+> クラスタから外したノードが `pvecm nodes` に残っていると「停止中のノードがある」と判定され、
+> 自動再起動が毎回見送られます。外したノードは `pvecm delnode <名前>` で削除してください。
 
 ---
 
@@ -81,9 +85,10 @@ last -x reboot | head
 tail -f /var/log/apt-maintenance.log
 ```
 
-### 予約した再起動を取り消したい
+### 予約した再起動を確認・取り消したい
 
 ```bash
+systemctl list-timers apt-delayed-reboot.timer   # 予約の有無と時刻
 systemctl stop apt-delayed-reboot.timer
 rm -f /var/lib/apt-maintenance/reboot-scheduled
 ```

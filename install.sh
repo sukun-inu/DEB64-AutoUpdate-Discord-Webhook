@@ -196,8 +196,9 @@ cat > "$SCRIPT" << 'SCRIPT_EOF'
 #
 #   apt-maintenance.sh               更新を実行して結果を通知（apt-maintenance.timer から起動）
 #   apt-maintenance.sh boot-notify   起動完了を通知（apt-boot-notify.timer から起動）
+#   apt-maintenance.sh do-reboot     安全を確認してから再起動（予約した再起動タイマーから起動）
 #
-# このファイルが唯一の正。install.sh 内の写しはこのファイルと同一に保つこと。
+# このファイル（リポジトリ直下の apt-maintenance.sh）が唯一の正。install.sh 内の写しはこのファイルと同一に保つこと。
 set -Eeuo pipefail
 
 CONF="/etc/apt-discord.conf"
@@ -213,6 +214,7 @@ COLOR_FAIL=15158332     # 赤
 COLOR_INFO=3447003      # 青
 
 DISK_WARN_PCT=90        # ディスク使用率がこれ以上なら ⚠️
+BUSY_WAIT_MIN=120       # バックアップ等の実行中は最大この分数だけ再起動を待つ
 
 # shellcheck source=/dev/null
 source "$CONF"
@@ -245,6 +247,16 @@ os_name() {
   if command -v pveversion >/dev/null 2>&1; then
     n="$n
 Proxmox VE $(pveversion 2>/dev/null | cut -d/ -f2 || echo '?')"
+  elif command -v proxmox-backup-manager >/dev/null 2>&1; then
+    n="$n
+Proxmox Backup Server"
+  fi
+  # VM / コンテナなら種別を添える（物理なら何も付けない）
+  local virt
+  virt=$(systemd-detect-virt 2>/dev/null || true)
+  if [ -n "$virt" ] && [ "$virt" != "none" ]; then
+    n="$n
+（仮想: ${virt}）"
   fi
   echo "$n"
 }
@@ -393,7 +405,7 @@ if [ "${1:-}" = "boot-notify" ]; then
   else
     KERNEL_LINE="$KERNEL_NOW"
     TITLE="サーバーが起動しました（予約外）"
-    DESC="自動メンテナンスが予約したものではない起動です（手動再起動・停電など）。"
+    DESC="自動メンテナンスが予約したものではない起動です（手動再起動・停電・VM ならホストの再起動など）。"
   fi
 
   COLOR=$COLOR_INFO
@@ -415,6 +427,88 @@ if [ "${1:-}" = "boot-notify" ]; then
 
   log "===== $(date '+%F %T %Z') boot-notify ====="
   send_discord "$TITLE" "$COLOR" "$DESC"
+  exit 0
+fi
+
+# ------------------------------------------------------------
+# 予約した再起動の実行（安全確認つき）
+# ------------------------------------------------------------
+
+# 再起動してはいけない作業が動いていれば、その内容を返す（空なら暇）
+busy_reason() {
+  local n
+  # PVE: バックアップ (vzdump) 実行中
+  if pgrep -x vzdump >/dev/null 2>&1; then
+    echo "バックアップ (vzdump) 実行中"; return
+  fi
+  # PBS: 実行中のタスク（バックアップ受信・GC・verify・sync など）
+  if command -v proxmox-backup-manager >/dev/null 2>&1; then
+    n=$(proxmox-backup-manager task list --output-format json 2>/dev/null \
+      | jq '[.[] | select(.endtime == null)] | length' 2>/dev/null || echo 0)
+    if [ "${n:-0}" -gt 0 ]; then
+      echo "PBS のタスク ${n} 件が実行中"; return
+    fi
+  fi
+}
+
+# PVE クラスタで再起動してよいか。問題があれば理由を返す（空なら OK）
+cluster_block_reason() {
+  command -v pvesh >/dev/null 2>&1 || return 0
+  local st total online quorate
+  st=$(pvesh get /cluster/status --output-format json 2>/dev/null) \
+    || { echo "クラスタ状態を取得できません"; return; }
+  total=$(jq '[.[] | select(.type=="node")] | length' <<<"$st")
+  online=$(jq '[.[] | select(.type=="node" and .online==1)] | length' <<<"$st")
+  quorate=$(jq -r '[.[] | select(.type=="cluster")][0].quorate // "standalone"' <<<"$st")
+  if [ "$quorate" != "standalone" ] && [ "$quorate" != "1" ]; then
+    echo "クラスタが quorate ではありません"; return
+  fi
+  if [ "$online" -lt "$total" ]; then
+    echo "停止中のノードがあります（オンライン ${online}/${total}）"; return
+  fi
+}
+
+if [ "${1:-}" = "do-reboot" ]; then
+  log "===== $(date '+%F %T %Z') do-reboot ====="
+  REASON=""
+  if [ -f "$REBOOT_MARKER" ]; then
+    REASON=$(sed -n 's/^REASON="\(.*\)"$/\1/p' "$REBOOT_MARKER" 2>/dev/null || true)
+  fi
+
+  # メンテナンス本体が動いている間は待つ（最大 30 分）
+  exec 9>/run/apt-maintenance.lock
+  flock -w 1800 9 || true
+
+  BLOCK=""
+  waited=0
+  while :; do
+    BLOCK=$(busy_reason)
+    if [ -z "$BLOCK" ] || [ "$waited" -ge "$BUSY_WAIT_MIN" ]; then break; fi
+    log "再起動待ち: ${BLOCK}（${waited} 分経過）"
+    sleep 300
+    waited=$((waited + 5))
+  done
+  if [ -z "$BLOCK" ]; then BLOCK=$(cluster_block_reason); fi
+
+  add_host_fields
+  if [ -n "$BLOCK" ]; then
+    # 見送ったら記録を消す。翌日のメンテナンスで reboot-required が残っていれば再予約される
+    rm -f "$REBOOT_MARKER"
+    log "再起動を見送り: ${BLOCK}"
+    add_field "見送った理由" "$BLOCK" false
+    add_field "再起動が必要な理由" "${REASON:-不明}" false
+    send_discord "再起動を見送りました" "$COLOR_FAIL" \
+"安全に再起動できない状態だったため、予約していた再起動を中止しました。
+次回のメンテナンスで再び予約します。急ぐ場合は状況を確認して手動で再起動してください。"
+    exit 0
+  fi
+
+  add_field "再起動の理由" "${REASON:-不明}" false
+  if [ "$waited" -gt 0 ]; then add_field "待ち時間" "${waited} 分（実行中の作業の終了待ち）" false; fi
+  send_discord "これから再起動します" "$COLOR_REBOOT" \
+"予約していた再起動を開始します。数分以内に「再起動完了」が届かなければ、コンソールを確認してください。"
+  log "reboot 実行"
+  systemctl reboot
   exit 0
 fi
 
@@ -499,7 +593,7 @@ ${SCHEDULED_AT:-（時刻不明）}"
       done
 
       if systemd-run --quiet --unit="$REBOOT_UNIT" --on-calendar="$SCHEDULED_AT" \
-           --timer-property=AccuracySec=1s /bin/systemctl reboot >> "$LOG" 2>&1; then
+           --timer-property=AccuracySec=1s "$(readlink -f "$0")" do-reboot >> "$LOG" 2>&1; then
         cat > "$REBOOT_MARKER" <<EOF
 SCHEDULED_AT="${SCHEDULED_AT}"
 KERNEL_BEFORE="$(uname -r)"
