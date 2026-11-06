@@ -52,6 +52,16 @@ os_name() {
   if command -v pveversion >/dev/null 2>&1; then
     n="$n
 Proxmox VE $(pveversion 2>/dev/null | cut -d/ -f2 || echo '?')"
+  elif command -v proxmox-backup-manager >/dev/null 2>&1; then
+    n="$n
+Proxmox Backup Server"
+  fi
+  # VM / コンテナなら種別を添える（物理なら何も付けない）
+  local virt
+  virt=$(systemd-detect-virt 2>/dev/null || true)
+  if [ -n "$virt" ] && [ "$virt" != "none" ]; then
+    n="$n
+（仮想: ${virt}）"
   fi
   echo "$n"
 }
@@ -200,7 +210,7 @@ if [ "${1:-}" = "boot-notify" ]; then
   else
     KERNEL_LINE="$KERNEL_NOW"
     TITLE="サーバーが起動しました（予約外）"
-    DESC="自動メンテナンスが予約したものではない起動です（手動再起動・停電など）。"
+    DESC="自動メンテナンスが予約したものではない起動です（手動再起動・停電・VM ならホストの再起動など）。"
   fi
 
   COLOR=$COLOR_INFO
