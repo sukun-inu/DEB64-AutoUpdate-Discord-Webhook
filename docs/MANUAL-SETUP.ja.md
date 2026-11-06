@@ -12,8 +12,16 @@ curl が使えない環境や、内容を確認しながらセットアップし
 
 ```bash
 apt install -y unattended-upgrades jq curl
-dpkg-reconfigure -plow unattended-upgrades
+
+# 更新はこの仕組みのタイマーに一本化する（標準の apt-daily-upgrade に更新させない）
+cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "0";
+EOF
 ```
+
+> `dpkg-reconfigure unattended-upgrades` は実行しないでください。標準の自動更新が有効になり、
+> 通知の外で更新が済んでしまいます。
 
 ---
 
@@ -29,7 +37,7 @@ chmod 600 /etc/apt-discord.conf
 ```
 
 > **WEBHOOK_URL** : Discord チャンネルの「サーバー設定 → 連携サービス → ウェブフック」から取得してください。  
-> **REBOOT_TIME** : カーネル更新後に再起動する時刻（24h 表記）。
+> **REBOOT_TIME** : 再起動が必要な更新があったとき、次にこの時刻が来たら再起動する（24h 表記）。
 
 ---
 
@@ -92,11 +100,46 @@ EOF
 
 ---
 
-### 6. 有効化
+### 6. 起動通知サービスとタイマーの作成
+
+起動の 90 秒後に、起動したことと失敗しているサービスの有無を Discord へ通知します。
+
+```bash
+cat > /etc/systemd/system/apt-boot-notify.service << 'EOF'
+[Unit]
+Description=Notify Discord that the server has booted
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/apt-maintenance.sh boot-notify
+EOF
+
+cat > /etc/systemd/system/apt-boot-notify.timer << 'EOF'
+[Unit]
+Description=Notify Discord shortly after boot
+
+[Timer]
+# サービスの起動が一通り終わってから状態を報告する
+OnBootSec=90s
+
+[Install]
+WantedBy=timers.target
+EOF
+```
+
+---
+
+### 7. 有効化
 
 ```bash
 systemctl daemon-reload
 systemctl enable --now apt-maintenance.timer
+systemctl enable apt-boot-notify.timer
+
+# 疎通確認（Discord に「サーバーが起動しました」と届けば OK）
+/usr/local/sbin/apt-maintenance.sh boot-notify
 ```
 
 ---

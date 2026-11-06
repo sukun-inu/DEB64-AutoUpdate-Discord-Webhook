@@ -18,12 +18,14 @@
       - curl
     state: present
 
-- name: unattended-upgrades の自動更新を有効化
+# 更新の実行は apt-maintenance.timer に一本化する。
+# 標準の apt-daily-upgrade.timer にも更新させると、通知の外で更新が済んでしまうため無効にする。
+- name: 標準の自動更新を止め、パッケージリスト更新のみ有効化
   copy:
     dest: /etc/apt/apt.conf.d/20auto-upgrades
     content: |
       APT::Periodic::Update-Package-Lists "1";
-      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::Unattended-Upgrade "0";
     owner: root
     group: root
     mode: "0644"
@@ -105,6 +107,41 @@
     mode: "0644"
   notify: reload systemd
 
+- name: apt-boot-notify.service を配置（起動時に Discord へ通知）
+  copy:
+    dest: /etc/systemd/system/apt-boot-notify.service
+    content: |
+      [Unit]
+      Description=Notify Discord that the server has booted
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/apt-maintenance.sh boot-notify
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload systemd
+
+- name: apt-boot-notify.timer を配置（起動の 90 秒後に通知）
+  copy:
+    dest: /etc/systemd/system/apt-boot-notify.timer
+    content: |
+      [Unit]
+      Description=Notify Discord shortly after boot
+
+      [Timer]
+      # サービスの起動が一通り終わってから状態を報告する
+      OnBootSec=90s
+
+      [Install]
+      WantedBy=timers.target
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload systemd
+
 - name: systemd をリロード
   meta: flush_handlers
 
@@ -113,3 +150,8 @@
     name: apt-maintenance.timer
     enabled: yes
     state: started
+
+- name: apt-boot-notify.timer を有効化
+  systemd:
+    name: apt-boot-notify.timer
+    enabled: yes

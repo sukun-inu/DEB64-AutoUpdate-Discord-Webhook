@@ -1,83 +1,406 @@
 #!/bin/bash
-set -euo pipefail
+# APT 自動メンテナンス + Discord 通知
+#
+#   apt-maintenance.sh               更新を実行して結果を通知（apt-maintenance.timer から起動）
+#   apt-maintenance.sh boot-notify   起動完了を通知（apt-boot-notify.timer から起動）
+#
+# このファイルが唯一の正。install.sh 内の写しはこのファイルと同一に保つこと。
+set -Eeuo pipefail
 
-source /etc/apt-discord.conf
+CONF="/etc/apt-discord.conf"
+LOG="/var/log/apt-maintenance.log"
+DPKG_LOG="/var/log/dpkg.log"
+STATE_DIR="/var/lib/apt-maintenance"
+REBOOT_MARKER="$STATE_DIR/reboot-scheduled"
+REBOOT_UNIT="apt-delayed-reboot"
+
+COLOR_OK=3066993        # 緑
+COLOR_REBOOT=15844367   # 黄
+COLOR_FAIL=15158332     # 赤
+COLOR_INFO=3447003      # 青
+
+DISK_WARN_PCT=90        # ディスク使用率がこれ以上なら ⚠️
+
+# shellcheck source=/dev/null
+source "$CONF"
 [ -z "${WEBHOOK_URL:-}" ] && exit 0
+REBOOT_TIME="${REBOOT_TIME:-03:00}"
 
 HOST=$(hostname)
-CLUSTER=$(hostname -d 2>/dev/null || echo "unknown")
-LOG="/var/log/apt-maintenance.log"
+CLUSTER=$(hostname -d 2>/dev/null || true)
+if [ -z "$CLUSTER" ]; then CLUSTER="-"; fi
+
+log() { echo "$*" >> "$LOG"; }
+
+# ログ末尾を Discord に貼れる長さで返す
+log_tail() {
+  local s
+  s=$(tail -n 20 "$LOG" 2>/dev/null | cut -c1-200 || true)
+  if [ "${#s}" -gt 1500 ]; then s="${s: -1500}"; fi
+  printf '%s' "$s"
+}
+
+# ------------------------------------------------------------
+# サーバー情報の収集（どれも失敗したら「不明」を返し、スクリプトは止めない）
+# ------------------------------------------------------------
+os_name() {
+  local n="不明"
+  if [ -r /etc/os-release ]; then
+    # shellcheck source=/dev/null
+    n=$(. /etc/os-release && echo "${PRETTY_NAME:-不明}")
+  fi
+  if command -v pveversion >/dev/null 2>&1; then
+    n="$n
+Proxmox VE $(pveversion 2>/dev/null | cut -d/ -f2 || echo '?')"
+  fi
+  echo "$n"
+}
+
+ip_addr() { hostname -I 2>/dev/null | awk '{print $1}' || true; }
+
+human_secs() {
+  awk -v s="$1" 'BEGIN{s=int(s); d=int(s/86400); h=int(s%86400/3600); m=int(s%3600/60); x=s%60;
+    if (d>0) printf "%d日 %d時間\n", d, h;
+    else if (h>0) printf "%d時間 %d分\n", h, m;
+    else if (m>0) printf "%d分 %d秒\n", m, x;
+    else printf "%d秒\n", x }'
+}
+
+uptime_human() { human_secs "$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo 0)"; }
+
+disk_usage() {
+  df -P / 2>/dev/null | awk -v w="$DISK_WARN_PCT" 'NR==2{p=$5; sub("%","",p);
+    printf "%s%s%% 使用\n空き %.1f GB\n", (p+0>=w ? "⚠️ " : ""), p, $4/1048576}' || echo "不明"
+}
+
+mem_usage() {
+  free -m 2>/dev/null | awk '/^Mem:/{printf "%d%% 使用\n%.1f / %.1f GB\n", $3*100/$2, $3/1024, $2/1024}' || echo "不明"
+}
+
+load_avg() {
+  local l1 l5 l15 rest
+  read -r l1 l5 l15 rest < /proc/loadavg || { echo "不明"; return; }
+  printf '%s / %s / %s\n(%s コア)\n' "$l1" "$l5" "$l15" "$(nproc 2>/dev/null || echo '?')"
+}
+
+FAILED_UNITS=""
+collect_failed_units() {
+  FAILED_UNITS=$(systemctl list-units --state=failed --no-legend --plain 2>/dev/null \
+    | awk '{print $1}' | grep . || true)
+}
+failed_units_text() {
+  local n
+  n=$(printf '%s' "$FAILED_UNITS" | grep -c . || true)
+  if [ "$n" -eq 0 ]; then
+    echo "なし"
+  else
+    printf '⚠️ %s 件\n%s\n' "$n" "$(printf '%s\n' "$FAILED_UNITS" | head -n 10)"
+  fi
+}
+
+next_maintenance() {
+  local x
+  x=$(systemctl show apt-maintenance.timer -p NextElapseUSecRealtime --value 2>/dev/null || true)
+  if [ -z "$x" ] || [ "$x" = "n/a" ]; then echo "不明"; return; fi
+  date -d "${x% *}" '+%m/%d %H:%M' 2>/dev/null || echo "$x"
+}
+
+# ------------------------------------------------------------
+# Discord 送信
+# ------------------------------------------------------------
+FIELDS='[]'
+# add_field <名前> <値> [inline: true|false]
+add_field() {
+  local v="$2"
+  if [ -z "$v" ]; then v="-"; fi
+  FIELDS=$(jq -c --arg n "$1" --arg v "${v:0:1000}" --argjson i "${3:-true}" \
+    '. + [{name:$n, value:$v, inline:$i}]' <<<"$FIELDS" 2>/dev/null || echo "$FIELDS")
+}
+
+add_host_fields() {
+  local ip
+  ip=$(ip_addr)
+  add_field "ホスト" "${HOST}${ip:+
+${ip}}"
+  add_field "クラスタ" "$CLUSTER"
+  add_field "OS" "$(os_name)"
+}
+
+# send_discord <タイトル> <色> <本文>   （欄は FIELDS に積んでおく）
+# 失敗しても最大 6 回（約 1 分）再送する。通知失敗でスクリプトは止めない。
+send_discord() {
+  local payload code="000" i
+  payload=$(jq -n \
+    --arg title "$1" --argjson color "$2" --arg desc "${3:0:4000}" \
+    --argjson fields "$FIELDS" \
+    '{embeds:[{title:$title, color:$color, description:$desc,
+      fields:$fields, timestamp:(now|todate)}]}') \
+    || { log "Discord: payload 作成失敗"; return 0; }
+
+  for i in 1 2 3 4 5 6; do
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
+      -H "Content-Type: application/json" -X POST -d "$payload" "$WEBHOOK_URL" || true)
+    case "$code" in 2??) break ;; esac
+    if [ "$i" -lt 6 ]; then sleep 10; fi
+  done
+  log "Discord HTTP: $code (試行 $i 回)"
+}
+
+on_error() {
+  local code=$1 line=$2
+  trap - ERR
+  log "ERROR: ${line} 行目で異常終了 (exit ${code})"
+  FIELDS='[]'
+  add_host_fields
+  send_discord "APT自動メンテナンス: スクリプトエラー" "$COLOR_FAIL" \
+"スクリプトが ${line} 行目で異常終了しました（終了コード ${code}）。
+更新や再起動予約が完了していない可能性があります。
+
+直近のログ:
+\`\`\`
+$(log_tail)
+\`\`\`"
+  exit "$code"
+}
+trap 'on_error $? $LINENO' ERR
+
+mkdir -p "$STATE_DIR"
+
+# ------------------------------------------------------------
+# 起動通知
+# ------------------------------------------------------------
+if [ "${1:-}" = "boot-notify" ]; then
+  KERNEL_NOW=$(uname -r)
+  BOOT_AT=$(uptime -s 2>/dev/null || echo "不明")
+  collect_failed_units
+
+  SCHEDULED_AT=""; KERNEL_BEFORE=""; REASON=""
+  if [ -f "$REBOOT_MARKER" ]; then
+    # shellcheck source=/dev/null
+    source "$REBOOT_MARKER"
+    rm -f "$REBOOT_MARKER"
+    if [ -n "$KERNEL_BEFORE" ] && [ "$KERNEL_BEFORE" != "$KERNEL_NOW" ]; then
+      KERNEL_LINE="${KERNEL_BEFORE}
+→ **${KERNEL_NOW}**"
+    else
+      KERNEL_LINE="${KERNEL_NOW}
+（変化なし）"
+    fi
+    BOOT_TS=$(date -d "$BOOT_AT" +%s 2>/dev/null || echo 0)
+    SCHED_TS=$(date -d "${SCHEDULED_AT:-}" +%s 2>/dev/null || echo 0)
+    if [ "$BOOT_TS" -gt 0 ] && [ "$SCHED_TS" -gt 0 ] && [ "$BOOT_TS" -lt "$((SCHED_TS - 120))" ]; then
+      TITLE="再起動完了（予約時刻より前に再起動）"
+      DESC="予約時刻より前に再起動されました（手動再起動・停電など）。更新の反映は完了しています。"
+    else
+      TITLE="再起動完了（予約どおり）"
+      DESC="予約されていた再起動が完了しました。"
+    fi
+    DESC="${DESC}
+再起動の理由: ${REASON:-不明}"
+  else
+    KERNEL_LINE="$KERNEL_NOW"
+    TITLE="サーバーが起動しました（予約外）"
+    DESC="自動メンテナンスが予約したものではない起動です（手動再起動・停電など）。"
+  fi
+
+  COLOR=$COLOR_INFO
+  if [ -n "$FAILED_UNITS" ]; then
+    COLOR=$COLOR_FAIL
+    DESC="${DESC}
+
+⚠️ **起動に失敗したサービスがあります。** \`systemctl --failed\` で確認してください。"
+  fi
+
+  add_host_fields
+  add_field "起動時刻" "$BOOT_AT"
+  add_field "カーネル" "$KERNEL_LINE"
+  add_field "予約時刻" "${SCHEDULED_AT:-なし}"
+  add_field "ディスク (/)" "$(disk_usage)"
+  add_field "メモリ" "$(mem_usage)"
+  add_field "負荷 (1/5/15分)" "$(load_avg)"
+  add_field "失敗中のサービス" "$(failed_units_text)" false
+
+  log "===== $(date '+%F %T %Z') boot-notify ====="
+  send_discord "$TITLE" "$COLOR" "$DESC"
+  exit 0
+fi
+
+# ------------------------------------------------------------
+# メンテナンス本体
+# ------------------------------------------------------------
+
+# 二重実行防止（手動実行とタイマーが重なった場合など）
+exec 9>/run/apt-maintenance.lock
+if ! flock -n 9; then
+  echo "別の apt-maintenance が実行中のため終了します。" >&2
+  exit 0
+fi
+
+log "===== $(date '+%F %T %Z') ====="
 
 RESULT="成功"
-COLOR=3066993
-KERNEL_UPDATED=0
-REBOOT_SCHEDULED=0
+COLOR=$COLOR_OK
+FAIL_NOTE=""
 
-echo "===== $(date '+%F %T %Z') =====" >> "$LOG"
+# 今回の実行で dpkg.log に追記された分だけを見るため、開始時点のサイズを控える
+START_BYTES=$(stat -c %s "$DPKG_LOG" 2>/dev/null || echo 0)
 
-if ! unattended-upgrade >> "$LOG" 2>&1; then
-  RESULT="失敗"
-  COLOR=15158332
+log "--- apt-get update ---"
+if ! apt-get -o DPkg::Lock::Timeout=600 update >> "$LOG" 2>&1; then
+  RESULT="失敗"; COLOR=$COLOR_FAIL
+  FAIL_NOTE="パッケージリストの更新 (apt-get update) に失敗しました。"
 fi
 
-TODAY=$(date '+%Y-%m-%d')
-
-UPDATED_PACKAGES=$(grep "$TODAY" /var/log/dpkg.log 2>/dev/null \
-  | grep " upgrade " | awk '{print $4}' | sort -u || true)
-
-COUNT=$(echo "$UPDATED_PACKAGES" | grep -c . || true)
-
-SECURITY_COUNT=$(grep "$TODAY" "$LOG" 2>/dev/null \
-  | grep -i "security" | grep -c "upgrade" || true)
-
-CRITICAL_REGEX='linux-image|linux-headers|openssl|systemd|glibc|libc6|qemu|pve-kernel'
-CRITICAL_COUNT=$(echo "$UPDATED_PACKAGES" | grep -Eic "$CRITICAL_REGEX" || true)
-
-if echo "$UPDATED_PACKAGES" | grep -Eiq '^linux-image|^linux-headers|^pve-kernel'; then
-  KERNEL_UPDATED=1
-  COLOR=15844367
+log "--- unattended-upgrade ---"
+if ! unattended-upgrade -v >> "$LOG" 2>&1; then
+  RESULT="失敗"; COLOR=$COLOR_FAIL
+  FAIL_NOTE="${FAIL_NOTE:+$FAIL_NOTE
+}unattended-upgrade が失敗しました。"
 fi
 
-if [ -f /var/run/reboot-required ] && [ "$KERNEL_UPDATED" -eq 1 ]; then
-  NEXT_RUN=$(date -d "tomorrow ${REBOOT_TIME:-03:00}" +"%Y-%m-%d %H:%M:%S")
-  systemctl stop delayed-reboot.service 2>/dev/null || true
-  systemd-run --on-calendar="$NEXT_RUN" --unit=delayed-reboot.service /sbin/reboot
-  REBOOT_SCHEDULED=1
+# 今回追記された dpkg.log の行（途中でローテートされていたら全体を読む）
+END_BYTES=$(stat -c %s "$DPKG_LOG" 2>/dev/null || echo 0)
+if [ "$END_BYTES" -lt "$START_BYTES" ]; then START_BYTES=0; fi
+NEW_DPKG=$(tail -c +"$((START_BYTES + 1))" "$DPKG_LOG" 2>/dev/null || true)
+
+# 「パッケージ名 旧版 → 新版」の一覧。新規インストール（新しいカーネル等）も含める
+UPDATED=$(printf '%s\n' "$NEW_DPKG" | awk '
+  $3=="upgrade" { split($4,p,":"); print p[1] "  " $5 " → " $6 }
+  $3=="install" { split($4,p,":"); print p[1] "  (新規) " $6 }' | sort -u || true)
+COUNT=$(printf '%s' "$UPDATED" | grep -c . || true)
+
+CRITICAL_REGEX='^(linux-image|linux-headers|proxmox-kernel|pve-kernel|openssl|libssl|systemd|glibc|libc6|qemu|openssh)'
+CRITICAL_COUNT=$(printf '%s' "$UPDATED" | grep -Ec "$CRITICAL_REGEX" || true)
+
+# 自動更新の対象外で残っている更新（PVE のリポジトリや通常の更新など。手動で full-upgrade が必要）
+PENDING=$(apt-get -s -o Debug::NoLocking=1 dist-upgrade 2>/dev/null | awk '/^Inst /{print $2}' | sort -u || true)
+PENDING_COUNT=$(printf '%s' "$PENDING" | grep -c . || true)
+
+# ------------------------------------------------------------
+# 再起動の予約
+# ------------------------------------------------------------
+REBOOT_SHORT="不要"
+REASON=""
+if [ -f /var/run/reboot-required ]; then
+  REASON=$(sort -u /var/run/reboot-required.pkgs 2>/dev/null | paste -sd ',' - | sed 's/,/, /g' || true)
+  REASON="${REASON:-不明}"
+
+  if systemctl is-active --quiet "${REBOOT_UNIT}.timer"; then
+    SCHEDULED_AT=$(sed -n 's/^SCHEDULED_AT="\(.*\)"$/\1/p' "$REBOOT_MARKER" 2>/dev/null || true)
+    REBOOT_SHORT="予約済み
+${SCHEDULED_AT:-（時刻不明）}"
+    if [ "$RESULT" = "成功" ]; then COLOR=$COLOR_REBOOT; fi
+  else
+    # 次に来る REBOOT_TIME（今日まだなら今日、過ぎていれば明日）
+    NOW_TS=$(date +%s)
+    if WHEN_TS=$(date -d "today ${REBOOT_TIME}" +%s 2>/dev/null); then
+      if [ "$WHEN_TS" -le "$((NOW_TS + 60))" ]; then
+        WHEN_TS=$(date -d "tomorrow ${REBOOT_TIME}" +%s)
+      fi
+      SCHEDULED_AT=$(date -d "@${WHEN_TS}" '+%Y-%m-%d %H:%M:%S')
+
+      # 旧バージョンが使っていたユニット名も含めて掃除してから予約する
+      for u in "$REBOOT_UNIT" delayed-reboot; do
+        systemctl stop "${u}.timer" "${u}.service" >/dev/null 2>&1 || true
+        systemctl reset-failed "${u}.timer" "${u}.service" >/dev/null 2>&1 || true
+      done
+
+      if systemd-run --quiet --unit="$REBOOT_UNIT" --on-calendar="$SCHEDULED_AT" \
+           --timer-property=AccuracySec=1s /bin/systemctl reboot >> "$LOG" 2>&1; then
+        cat > "$REBOOT_MARKER" <<EOF
+SCHEDULED_AT="${SCHEDULED_AT}"
+KERNEL_BEFORE="$(uname -r)"
+REASON="${REASON//\"/}"
+EOF
+        REBOOT_SHORT="**予約しました**
+${SCHEDULED_AT}"
+        if [ "$RESULT" = "成功" ]; then COLOR=$COLOR_REBOOT; fi
+      else
+        RESULT="失敗"; COLOR=$COLOR_FAIL
+        REBOOT_SHORT="⚠️ **予約失敗**
+手動で再起動してください"
+      fi
+    else
+      RESULT="失敗"; COLOR=$COLOR_FAIL
+      REBOOT_SHORT="⚠️ **予約不可**
+REBOOT_TIME「${REBOOT_TIME}」が不正"
+    fi
+  fi
 fi
+
+# ------------------------------------------------------------
+# 通知
+# ------------------------------------------------------------
+collect_failed_units
+
+WARNINGS=""
+DISK_TEXT=$(disk_usage)
+case "$DISK_TEXT" in ⚠️*) WARNINGS="${WARNINGS}⚠️ ディスクの空きが少なくなっています。
+" ;; esac
+if [ -n "$FAILED_UNITS" ]; then
+  WARNINGS="${WARNINGS}⚠️ 失敗しているサービスがあります（\`systemctl --failed\`）。
+"
+fi
+if [ "$PENDING_COUNT" -gt 0 ]; then
+  WARNINGS="${WARNINGS}ℹ️ 自動更新の対象外の更新が ${PENDING_COUNT} 件あります（手動で \`apt full-upgrade\`）。
+"
+fi
+
+DESC=""
+if [ -n "$WARNINGS" ]; then DESC="${WARNINGS}
+"; fi
 
 if [ "$COUNT" -eq 0 ]; then
-  PACKAGE_LIST="なし"
+  DESC="${DESC}今回適用した更新はありません。"
 else
-  PACKAGE_LIST=$(echo "$UPDATED_PACKAGES" | head -n 50)
+  LIST=$(printf '%s\n' "$UPDATED" | head -n 40)
+  if [ "$COUNT" -gt 40 ]; then
+    LIST="${LIST}
+…ほか $((COUNT - 40)) 件"
+  fi
+  DESC="${DESC}**適用した更新**
+\`\`\`
+${LIST:0:2000}
+\`\`\`"
 fi
-PACKAGE_LIST=$(printf '```\n%s\n```' "$PACKAGE_LIST")
 
-TZ_INFO=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "unknown")
-NTP_INFO=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || echo "unknown")
+if [ -n "$REASON" ]; then
+  DESC="${DESC}
+**再起動が必要な理由**: ${REASON}"
+fi
 
-DESCRIPTION="セキュリティ更新数: ${SECURITY_COUNT}
-重大パッケージ検知数: ${CRITICAL_COUNT}
-カーネル更新: ${KERNEL_UPDATED}
-再起動予定: ${REBOOT_SCHEDULED}
-タイムゾーン: ${TZ_INFO} / NTP同期: ${NTP_INFO}
+if [ "$PENDING_COUNT" -gt 0 ]; then
+  PLIST=$(printf '%s\n' "$PENDING" | head -n 15 | paste -sd ' ' -)
+  if [ "$PENDING_COUNT" -gt 15 ]; then PLIST="${PLIST} …ほか $((PENDING_COUNT - 15)) 件"; fi
+  DESC="${DESC}
+**未適用の更新**: ${PLIST:0:600}"
+fi
 
-更新一覧:
-${PACKAGE_LIST}
-※詳細ログ: ${LOG}"
+if [ -n "$FAIL_NOTE" ]; then
+  DESC="${DESC}
 
-PAYLOAD=$(jq -n \
-  --arg host    "$HOST" \
-  --arg cluster "$CLUSTER" \
-  --arg result  "$RESULT" \
-  --arg desc    "$DESCRIPTION" \
-  --argjson color "$COLOR" \
-  '{embeds:[{title:"APT自動メンテナンス結果",color:$color,
-    fields:[{name:"ホスト",value:$host,inline:true},
-            {name:"クラスタ",value:$cluster,inline:true},
-            {name:"実行結果",value:$result,inline:true}],
-    description:$desc}]}')
+${FAIL_NOTE}
+\`\`\`
+$(log_tail)
+\`\`\`"
+fi
 
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-  -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$WEBHOOK_URL")
+DESC="${DESC}
+詳細ログ: ${LOG}"
 
-echo "Discord HTTP: $HTTP_CODE" >> "$LOG"
+add_host_fields
+add_field "実行結果" "**${RESULT}**"
+add_field "適用した更新" "${COUNT} 件
+（重要: ${CRITICAL_COUNT} 件）"
+add_field "未適用の更新" "${PENDING_COUNT} 件"
+add_field "再起動" "$REBOOT_SHORT"
+add_field "カーネル (実行中)" "$(uname -r)"
+add_field "稼働時間" "$(uptime_human)"
+add_field "ディスク (/)" "$DISK_TEXT"
+add_field "メモリ" "$(mem_usage)"
+add_field "負荷 (1/5/15分)" "$(load_avg)"
+add_field "失敗中のサービス" "$(failed_units_text)"
+add_field "次回実行" "$(next_maintenance)"
+add_field "所要時間" "$(human_secs "$SECONDS")"
+
+send_discord "APT自動メンテナンス結果" "$COLOR" "$DESC"

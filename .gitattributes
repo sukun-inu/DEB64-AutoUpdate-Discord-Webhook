@@ -1,0 +1,2 @@
+# curl | bash で配布するスクリプトが CRLF で壊れないよう、常に LF で扱う
+* text=auto eol=lf

@@ -15,10 +15,16 @@ you choose**, so nothing goes down while you are using it.
 ## What it does
 
 - Applies package updates daily via `unattended-upgrades`, on a systemd timer
-- Reports each run to Discord: green for clean, yellow when a reboot is needed,
+- Reports each run to Discord: green for clean, yellow when a reboot was booked,
   red on failure
-- Includes updated package names and the security-update count in the notification
+- Lists each updated package as "old version → new version"
 - Schedules a reboot at your chosen time, and only when the update actually needs one
+  (the notification says when, and which packages need it)
+- **Posts "reboot complete" after every boot**, so you can tell the reboot happened —
+  and spot unplanned ones (power loss, manual reboots)
+- Reports an error even when the script dies part-way
+- Includes the machine's health in every notification: disk, memory, load, uptime,
+  failed services, updates left for a manual upgrade (e.g. Proxmox packages), next run
 - Rolls out to many machines at once with Ansible
 
 ## Quick start
