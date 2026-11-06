@@ -119,9 +119,24 @@
       [Service]
       Type=oneshot
       ExecStart=/usr/local/sbin/apt-maintenance.sh boot-notify
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload systemd
+
+- name: apt-boot-notify.timer を配置（起動の 90 秒後に通知）
+  copy:
+    dest: /etc/systemd/system/apt-boot-notify.timer
+    content: |
+      [Unit]
+      Description=Notify Discord shortly after boot
+
+      [Timer]
+      # サービスの起動が一通り終わってから状態を報告する
+      OnBootSec=90s
 
       [Install]
-      WantedBy=multi-user.target
+      WantedBy=timers.target
     owner: root
     group: root
     mode: "0644"
@@ -136,7 +151,7 @@
     enabled: yes
     state: started
 
-- name: apt-boot-notify.service を有効化
+- name: apt-boot-notify.timer を有効化
   systemd:
-    name: apt-boot-notify.service
+    name: apt-boot-notify.timer
     enabled: yes

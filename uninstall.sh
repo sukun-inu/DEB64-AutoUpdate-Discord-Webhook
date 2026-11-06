@@ -15,6 +15,7 @@ SCRIPT="/usr/local/sbin/apt-maintenance.sh"
 SERVICE="/etc/systemd/system/apt-maintenance.service"
 TIMER="/etc/systemd/system/apt-maintenance.timer"
 BOOT_SERVICE="/etc/systemd/system/apt-boot-notify.service"
+BOOT_TIMER="/etc/systemd/system/apt-boot-notify.timer"
 STATE_DIR="/var/lib/apt-maintenance"
 AUTO_UPGRADES="/etc/apt/apt.conf.d/20auto-upgrades"
 LOG="/var/log/apt-maintenance.log"
@@ -30,7 +31,7 @@ echo -e "${RESET}"
 
 # --- インストール確認 ---
 FOUND_FILES=()
-for f in "$CONF" "$SCRIPT" "$SERVICE" "$TIMER" "$BOOT_SERVICE" "$AUTO_UPGRADES"; do
+for f in "$CONF" "$SCRIPT" "$SERVICE" "$TIMER" "$BOOT_SERVICE" "$BOOT_TIMER" "$AUTO_UPGRADES"; do
   [ -f "$f" ] && FOUND_FILES+=("$f")
 done
 
@@ -60,7 +61,8 @@ info "タイマーを停止・無効化しています..."
 systemctl stop apt-maintenance.timer 2>/dev/null || true
 systemctl disable apt-maintenance.timer 2>/dev/null || true
 rm -f /etc/systemd/system/timers.target.wants/apt-maintenance.timer
-systemctl disable apt-boot-notify.service 2>/dev/null || true
+systemctl disable apt-boot-notify.timer 2>/dev/null || true
+rm -f /etc/systemd/system/timers.target.wants/apt-boot-notify.timer
 rm -f /etc/systemd/system/multi-user.target.wants/apt-boot-notify.service
 success "タイマーを停止・無効化しました"
 
@@ -75,7 +77,7 @@ done
 # --- ファイル削除 ---
 info "ファイルを削除しています..."
 # Fix 3: install.sh が作成した 20auto-upgrades も削除対象に追加
-for f in "$TIMER" "$SERVICE" "$BOOT_SERVICE" "$SCRIPT" "$CONF" "$AUTO_UPGRADES"; do
+for f in "$TIMER" "$SERVICE" "$BOOT_SERVICE" "$BOOT_TIMER" "$SCRIPT" "$CONF" "$AUTO_UPGRADES"; do
   if [ -f "$f" ]; then
     rm -f "$f"
     success "削除: $f"

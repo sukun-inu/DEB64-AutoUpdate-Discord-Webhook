@@ -100,9 +100,9 @@ EOF
 
 ---
 
-### 6. 起動通知サービスの作成
+### 6. 起動通知サービスとタイマーの作成
 
-再起動のたびに Discord へ「起動した」と通知します。
+起動の 90 秒後に、起動したことと失敗しているサービスの有無を Discord へ通知します。
 
 ```bash
 cat > /etc/systemd/system/apt-boot-notify.service << 'EOF'
@@ -114,9 +114,18 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/apt-maintenance.sh boot-notify
+EOF
+
+cat > /etc/systemd/system/apt-boot-notify.timer << 'EOF'
+[Unit]
+Description=Notify Discord shortly after boot
+
+[Timer]
+# サービスの起動が一通り終わってから状態を報告する
+OnBootSec=90s
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=timers.target
 EOF
 ```
 
@@ -127,7 +136,7 @@ EOF
 ```bash
 systemctl daemon-reload
 systemctl enable --now apt-maintenance.timer
-systemctl enable apt-boot-notify.service
+systemctl enable apt-boot-notify.timer
 
 # 疎通確認（Discord に「サーバーが起動しました」と届けば OK）
 /usr/local/sbin/apt-maintenance.sh boot-notify

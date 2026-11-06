@@ -48,7 +48,8 @@ ansible-playbook -i inventory.ini \
 | `/usr/local/sbin/apt-maintenance.sh` | メンテナンス本体スクリプト |
 | `/etc/systemd/system/apt-maintenance.service` | systemd サービス定義 |
 | `/etc/systemd/system/apt-maintenance.timer` | 毎日 02:30 に起動するタイマー |
-| `/etc/systemd/system/apt-boot-notify.service` | 起動のたびに Discord へ通知するサービス |
+| `/etc/systemd/system/apt-boot-notify.service` | 起動を Discord へ通知するサービス |
+| `/etc/systemd/system/apt-boot-notify.timer` | 起動の 90 秒後に上のサービスを動かすタイマー |
 | `/etc/apt/apt.conf.d/20auto-upgrades` | 標準の自動更新を止める設定（更新はこの仕組みに一本化） |
 | `/var/lib/apt-maintenance/reboot-scheduled` | 再起動を予約した記録（起動通知が読んで削除する） |
 
@@ -96,6 +97,8 @@ rm -f /var/lib/apt-maintenance/reboot-scheduled
 ## カスタマイズポイント
 
 - **重大パッケージの追加**: スクリプト内の `CRITICAL_REGEX` に `|パッケージ名` を追記する
+- **ディスク警告のしきい値**: スクリプト内の `DISK_WARN_PCT`（デフォルト 90%）
+- **起動通知までの待ち時間**: `apt-boot-notify.timer` の `OnBootSec`（デフォルト 90 秒）
 - **通知先の変更**: `WEBHOOK_URL` を差し替えるだけで Slack / Teams 等にも対応可（ペイロード形式は要変更）
 - **実行時刻の変更**: タイマーの `OnCalendar` と設定ファイルの `REBOOT_TIME` を変更する。
   再起動は「再起動が必要になったあと、次に `REBOOT_TIME` が来たとき」に行われる
