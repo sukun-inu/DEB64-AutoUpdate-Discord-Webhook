@@ -8,7 +8,7 @@ webhook_url: "YOUR_DISCORD_WEBHOOK_URL"
 # APT メンテナンスを実行する時刻（タイマー）
 maintenance_time: "02:30"
 
-# カーネル更新が検知された翌朝に再起動する時刻
+# 再起動が必要な更新があったとき、次にこの時刻が来たら再起動する
 reboot_time: "03:00"
 
 # タイムゾーン

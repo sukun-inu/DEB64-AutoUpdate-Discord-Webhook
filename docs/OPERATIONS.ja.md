@@ -48,6 +48,11 @@ ansible-playbook -i inventory.ini \
 | `/usr/local/sbin/apt-maintenance.sh` | メンテナンス本体スクリプト |
 | `/etc/systemd/system/apt-maintenance.service` | systemd サービス定義 |
 | `/etc/systemd/system/apt-maintenance.timer` | 毎日 02:30 に起動するタイマー |
+| `/etc/systemd/system/apt-boot-notify.service` | 起動のたびに Discord へ通知するサービス |
+| `/etc/apt/apt.conf.d/20auto-upgrades` | 標準の自動更新を止める設定（更新はこの仕組みに一本化） |
+| `/var/lib/apt-maintenance/reboot-scheduled` | 再起動を予約した記録（起動通知が読んで削除する） |
+
+再起動は `apt-delayed-reboot.timer` という一時的なタイマーで予約されます。
 
 ---
 
@@ -56,16 +61,33 @@ ansible-playbook -i inventory.ini \
 ## 動作確認
 
 ```bash
-# デバッグ実行（全コマンドをトレース表示）
-bash -x /usr/local/sbin/apt-maintenance.sh
-echo "exit code: $?"
+# 今すぐ 1 回実行（結果が Discord に届く）
+systemctl start apt-maintenance.service
 
-# タイマーの登録確認
-systemctl list-timers apt-maintenance.timer
+# 起動通知だけ送ってみる（Webhook の疎通確認）
+/usr/local/sbin/apt-maintenance.sh boot-notify
+
+# 次回の実行時刻と、予約中の再起動
+systemctl list-timers apt-maintenance.timer apt-delayed-reboot.timer
+
+# 再起動待ちのパッケージ
+cat /var/run/reboot-required.pkgs
+
+# 実際に再起動した履歴
+last -x reboot | head
 
 # ログ確認
 tail -f /var/log/apt-maintenance.log
 ```
+
+### 予約した再起動を取り消したい
+
+```bash
+systemctl stop apt-delayed-reboot.timer
+rm -f /var/lib/apt-maintenance/reboot-scheduled
+```
+
+翌日のメンテナンスで再起動がまだ必要なら、改めて予約されます。
 
 ---
 
@@ -75,6 +97,7 @@ tail -f /var/log/apt-maintenance.log
 
 - **重大パッケージの追加**: スクリプト内の `CRITICAL_REGEX` に `|パッケージ名` を追記する
 - **通知先の変更**: `WEBHOOK_URL` を差し替えるだけで Slack / Teams 等にも対応可（ペイロード形式は要変更）
-- **実行時刻の変更**: タイマーの `OnCalendar` と設定ファイルの `REBOOT_TIME` を変更する
+- **実行時刻の変更**: タイマーの `OnCalendar` と設定ファイルの `REBOOT_TIME` を変更する。
+  再起動は「再起動が必要になったあと、次に `REBOOT_TIME` が来たとき」に行われる
 
 ---
