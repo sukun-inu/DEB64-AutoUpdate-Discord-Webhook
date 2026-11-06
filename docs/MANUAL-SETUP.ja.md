@@ -131,12 +131,44 @@ EOF
 
 ---
 
-### 7. 有効化
+### 7. 安定性チェックのサービスとタイマーの作成
+
+毎週月曜 09:00 に、ディスク・メモリ・負荷・失敗中のサービス・前回のメンテナンス結果などを Discord へ通知します。
+
+```bash
+cat > /etc/systemd/system/apt-health.service << 'EOF'
+[Unit]
+Description=Weekly stability report to Discord
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/apt-maintenance.sh health
+EOF
+
+cat > /etc/systemd/system/apt-health.timer << 'EOF'
+[Unit]
+Description=Weekly stability report to Discord
+
+[Timer]
+OnCalendar=Mon *-*-* 09:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+```
+
+---
+
+### 8. 有効化
 
 ```bash
 systemctl daemon-reload
 systemctl enable --now apt-maintenance.timer
 systemctl enable apt-boot-notify.timer
+systemctl enable --now apt-health.timer
 
 # 疎通確認（Discord に「サーバーが起動しました」と届けば OK）
 /usr/local/sbin/apt-maintenance.sh boot-notify

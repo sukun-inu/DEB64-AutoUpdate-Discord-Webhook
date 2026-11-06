@@ -25,8 +25,9 @@ you choose**, so nothing goes down while you are using it.
 - **Posts "reboot complete" after every boot**, so you can tell the reboot happened —
   and spot unplanned ones (power loss, manual reboots)
 - Reports an error even when the script dies part-way
-- Includes the machine's health in every notification: disk, memory, load, uptime,
-  failed services, updates left for a manual upgrade (e.g. Proxmox packages), next run
+- Reports updates left for a manual upgrade (e.g. Proxmox packages), only when new ones appear
+- Sends a weekly stability report: disk, memory, load, failed services, time sync,
+  pending reboot, and whether the last maintenance run succeeded
 
 ## Quick start
 
